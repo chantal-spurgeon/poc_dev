@@ -8,6 +8,32 @@ variable "snowflake_account" {
   description = "Target account name where objects will be built"
 }
 
+# Matching variables loaded via TF_VAR_ environment prefixes
+variable "snowflake_user" {
+  type        = string
+  description = "The Snowflake user running the Terraform execution"
+}
+
+variable "snowflake_authenticator" {
+  type        = string
+  default     = "SNOWFLAKE_JWT"
+  description = "Authentication method (e.g., SNOWFLAKE_JWT)"
+}
+
+variable "snowflake_private_key" {
+  type        = string
+  sensitive   = true
+  description = "The raw unencrypted or encrypted private key string structure"
+}
+
+variable "snowflake_private_key_passphrase" {
+  type        = string
+  sensitive   = true
+  default     = null
+  description = "The optional passphrase to decrypt the private key file"
+}
+
+
 # The Map structure for the Databases input file
 variable "databases" {
   type = map(object({

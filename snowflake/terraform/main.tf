@@ -1,40 +1,23 @@
-locals {
-  organization_name = "nxmepiv"
-  account_name      = "qgb61660"
-  private_key_path  = "~/.ssh/snowflake_key.p8"
-
-  # Build a configuration map for processing current schema assets
-  all_grants_config = {
-    "PROCEDURE" = var.account_roles[*].all_procedure_privileges
-    "FUNCTION"  = var.account_roles[*].all_function_privileges
-    "TASK"      = var.account_roles[*].all_task_privileges
-    "STAGE"     = var.account_roles[*].all_stage_privileges
-  }
-
-  # Build a configuration map for processing future schema assets
-  future_grants_config = {
-    "PROCEDURE" = var.account_roles[*].all_procedure_privileges # Maps matching structural frameworks
-    "FUNCTION"  = var.account_roles[*].all_function_privileges
-    "TASK"      = var.account_roles[*].all_task_privileges
-    "STAGE"     = var.account_roles[*].all_stage_privileges
-  }
-}
-
 ######## databases.tfvars ########
-# Provision parent Databases (Handles both Primary and Secondary Replicas)
+# Provision standard primary Databases (where is_replica is false)
 resource "snowflake_database" "managed_dbs" {
-  for_each = var.databases
+  for_each = { for k, v in var.databases : k => v if !lookup(v, "is_replica", false) }
 
   name                        = upper(each.key)
   comment                     = each.value.comment
   data_retention_time_in_days = each.value.data_retention_time_days
   is_transient                = each.value.is_transient
+}
 
-  # Replication specific logic
-  # If is_replica is true, it builds the database from the specified primary source path
-  from_replica = each.value.is_replica ? {
-    database_name = each.value.primary_database_path
-  } : null
+# Provision secondary replicated Databases (where is_replica is true)
+resource "snowflake_secondary_database" "managed_replicas" {
+  for_each = { for k, v in var.databases : k => v if lookup(v, "is_replica", false) }
+
+  name           = upper(each.key)
+  comment        = each.value.comment
+
+  # Natively references the remote qualified parent path using the modern schema variable
+  as_replica_of  = each.value.primary_database_path
 }
 
 # Flatten and provision nested Schemas (Only loops through databases with schemas defined)
@@ -133,6 +116,7 @@ resource "snowflake_grant_account_role" "role_to_role_grants" {
 }
 
 # Flatten and map the User-to-Role assignments
+# User-to-Role assignments matrix
 resource "snowflake_grant_account_role" "user_to_role_grants" {
   for_each = merge([
     for role_name, configurations in var.account_roles : {
@@ -147,10 +131,11 @@ resource "snowflake_grant_account_role" "user_to_role_grants" {
   role_name = snowflake_account_role.rbac_roles[each.value.role_target].name
   user_name = each.value.user_target
 
-  # Ensure the target user profiles exist before running assignments
-  # (Assumes your snowflake_user resource block is named "corporate_users")
-  depends_on = [snowflake_user.corporate_users]
+  depends_on = [
+    snowflake_user.corporate_users
+  ]
 }
+
 
 # Account-Level Privileges
 resource "snowflake_grant_privileges_to_account_role" "account_grants" {
@@ -199,10 +184,10 @@ resource "snowflake_grant_privileges_to_account_role" "schema_grants" {
     for role_key, role_val in var.account_roles : {
       for target_path, privileges in role_val.schema_privileges :
       "${role_key}_SCHEMA_${target_path}" => {
-        role       = upper(role_key)
-        db_name    = upper(split(".", target_path)[0])
+        role        = upper(role_key)
+        db_name     = upper(split(".", target_path)[0])
         schema_name = upper(split(".", target_path)[1])
-        privileges = privileges
+        privileges  = privileges
       }
     }
   ]...)
@@ -210,148 +195,29 @@ resource "snowflake_grant_privileges_to_account_role" "schema_grants" {
   account_role_name = snowflake_account_role.rbac_roles[each.value.role].name
 
   on_schema {
-    # target_schema syntax format must be: "DATABASE_NAME"."SCHEMA_NAME"
-    target_schema = "\"${each.value.db_name}\".\"${each.value.schema_name}\""
+    schema_name = "\"${each.value.db_name}\".\"${each.value.schema_name}\""
   }
 
   privileges = each.value.privileges
-
-  # Ensures target schemas exist if they are managed inside this same repository layout
   depends_on = [snowflake_schema.managed_schemas]
 }
 
-# Future Table Privileges in Schema
-resource "snowflake_grant_privileges_to_account_role" "future_table_grants" {
-  for_each = merge([
-    for role_key, role_val in var.account_roles : {
-      for target_path, privileges in role_val.future_table_privileges :
-      "${role_key}_FUTURE_TABLES_${target_path}" => {
-        role        = upper(role_key)
-        db_name     = upper(split(".", target_path)[0])
-        schema_name = upper(split(".", target_path)[1])
-        privileges  = privileges
-      }
-    }
-  ]...)
-
-  account_role_name = snowflake_account_role.rbac_roles[each.value.role].name
-
-  on_schema_object {
-    future_schemas {
-      # Target format must be: "DATABASE_NAME"."SCHEMA_NAME"
-      schema_name = "\"${each.value.db_name}\".\"${each.value.schema_name}\""
-    }
-    # Specifies that these grants apply to all future tables inside that schema
-    object_type = "TABLE"
-  }
-
-  privileges = each.value.privileges
-
-  depends_on = [snowflake_schema.managed_schemas]
-}
-
-# Future View Privileges in Schema
-resource "snowflake_grant_privileges_to_account_role" "future_view_grants" {
-  for_each = merge([
-    for role_key, role_val in var.account_roles : {
-      for target_path, privileges in role_val.future_view_privileges :
-      "${role_key}_FUTURE_VIEWS_${target_path}" => {
-        role        = upper(role_key)
-        db_name     = upper(split(".", target_path)[0])
-        schema_name = upper(split(".", target_path)[1])
-        privileges  = privileges
-      }
-    }
-  ]...)
-
-  account_role_name = snowflake_account_role.rbac_roles[each.value.role].name
-
-  on_schema_object {
-    future_schemas {
-      schema_name = "\"${each.value.db_name}\".\"${each.value.schema_name}\""
-    }
-    # Specifies that these grants apply to all future views inside that schema
-    object_type = "VIEW"
-  }
-
-  privileges = each.value.privileges
-
-  depends_on = [snowflake_schema.managed_schemas]
-}
-
-# Existing Table Privileges (ALL TABLES IN SCHEMA)
-resource "snowflake_grant_privileges_to_account_role" "all_table_grants" {
-  for_each = merge([
-    for role_key, role_val in var.account_roles : {
-      for target_path, privileges in role_val.all_table_privileges :
-      "${role_key}_ALL_TABLES_${target_path}" => {
-        role        = upper(role_key)
-        db_name     = upper(split(".", target_path)[0])
-        schema_name = upper(split(".", target_path)[1])
-        privileges  = privileges
-      }
-    }
-  ]...)
-
-  account_role_name = snowflake_account_role.rbac_roles[each.value.role].name
-
-  on_schema_object {
-    all_schemas {
-      # Target format must be: "DATABASE_NAME"."SCHEMA_NAME"
-      schema_name = "\"${each.value.db_name}\".\"${each.value.schema_name}\""
-    }
-    # Specifies that these grants apply to all existing tables inside that schema
-    object_type = "TABLE"
-  }
-
-  privileges = each.value.privileges
-
-  depends_on = [snowflake_schema.managed_schemas]
-}
-
-# Existing View Privileges (ALL VIEWS IN SCHEMA)
-resource "snowflake_grant_privileges_to_account_role" "all_view_grants" {
-  for_each = merge([
-    for role_key, role_val in var.account_roles : {
-      for target_path, privileges in role_val.all_view_privileges :
-      "${role_key}_ALL_VIEWS_${target_path}" => {
-        role        = upper(role_key)
-        db_name     = upper(split(".", target_path)[0])
-        schema_name = upper(split(".", target_path)[1])
-        privileges  = privileges
-      }
-    }
-  ]...)
-
-  account_role_name = snowflake_account_role.rbac_roles[each.value.role].name
-
-  on_schema_object {
-    all_schemas {
-      schema_name = "\"${each.value.db_name}\".\"${each.value.schema_name}\""
-    }
-    # Specifies that these grants apply to all existing views inside that schema
-    object_type = "VIEW"
-  }
-
-  privileges = each.value.privileges
-
-  depends_on = [snowflake_schema.managed_schemas]
-}
-
-# Bulk Existing Object Privileges (ALL)
+# Bulk Existing Object Privileges (ALL Tables, Views, Stages, Tasks, etc.)
 resource "snowflake_grant_privileges_to_account_role" "bulk_all_grants" {
   for_each = merge([
     for role_key, role_val in var.account_roles : [
       for type, mappings in {
-        "PROCEDURE" = role_val.all_procedure_privileges
-        "FUNCTION"  = role_val.all_function_privileges
-        "TASK"      = role_val.all_task_privileges
-        "STAGE"     = role_val.all_stage_privileges
+        "TABLES"     = role_val.all_table_privileges
+        "VIEWS"      = role_val.all_view_privileges
+        "PROCEDURES" = role_val.all_procedure_privileges
+        "FUNCTIONS"  = role_val.all_function_privileges
+        "TASKS"      = role_val.all_task_privileges
+        "STAGES"     = role_val.all_stage_privileges
       } : {
         for target_path, privileges in mappings :
         "${role_key}_ALL_${type}_${target_path}" => {
           role        = upper(role_key)
-          object_type = type
+          plural_type = type # Plural form restored (e.g., TABLES, VIEWS)
           db_name     = upper(split(".", target_path)[0])
           schema_name = upper(split(".", target_path)[1])
           privileges  = privileges
@@ -362,31 +228,34 @@ resource "snowflake_grant_privileges_to_account_role" "bulk_all_grants" {
 
   account_role_name = snowflake_account_role.rbac_roles[each.value.role].name
 
+  # FIX: Object parameters are nested completely inside the 'all' schema block
   on_schema_object {
-    all_schemas {
-      schema_name = "\"${each.value.db_name}\".\"${each.value.schema_name}\""
+    all {
+      object_type_plural = each.value.plural_type
+      in_schema          = "\"${each.value.db_name}\".\"${each.value.schema_name}\""
     }
-    object_type = each.value.object_type
   }
 
   privileges = each.value.privileges
   depends_on = [snowflake_schema.managed_schemas]
 }
 
-# Bulk Future Object Privileges (FUTURE)
+# Bulk Future Object Privileges (FUTURE Tables, Views, Stages, Tasks, etc.)
 resource "snowflake_grant_privileges_to_account_role" "bulk_future_grants" {
   for_each = merge([
     for role_key, role_val in var.account_roles : [
       for type, mappings in {
-        "PROCEDURE" = role_val.future_procedure_privileges
-        "FUNCTION"  = role_val.future_function_privileges
-        "TASK"      = role_val.future_task_privileges
-        "STAGE"     = role_val.future_stage_privileges
+        "TABLES"     = role_val.future_table_privileges
+        "VIEWS"      = role_val.future_view_privileges
+        "PROCEDURES" = role_val.future_procedure_privileges
+        "FUNCTIONS"  = role_val.future_function_privileges
+        "TASKS"      = role_val.future_task_privileges
+        "STAGES"     = role_val.future_stage_privileges
       } : {
         for target_path, privileges in mappings :
         "${role_key}_FUTURE_${type}_${target_path}" => {
           role        = upper(role_key)
-          object_type = type
+          plural_type = type # Plural form restored (e.g., TABLES, VIEWS)
           db_name     = upper(split(".", target_path)[0])
           schema_name = upper(split(".", target_path)[1])
           privileges  = privileges
@@ -397,11 +266,12 @@ resource "snowflake_grant_privileges_to_account_role" "bulk_future_grants" {
 
   account_role_name = snowflake_account_role.rbac_roles[each.value.role].name
 
+  # FIX: Object parameters are nested completely inside the 'future' schema block
   on_schema_object {
-    future_schemas {
-      schema_name = "\"${each.value.db_name}\".\"${each.value.schema_name}\""
+    future {
+      object_type_plural = each.value.plural_type
+      in_schema          = "\"${each.value.db_name}\".\"${each.value.schema_name}\""
     }
-    object_type = each.value.object_type
   }
 
   privileges = each.value.privileges
@@ -455,7 +325,7 @@ resource "snowflake_grant_privileges_to_account_role" "integration_grants" {
 }
 
 ######## users.tfvars ########
-# Provision Core Identity Profiles
+# Provision all users (Humans and Services) via the single official resource
 resource "snowflake_user" "corporate_users" {
   for_each = var.users
 
@@ -467,13 +337,15 @@ resource "snowflake_user" "corporate_users" {
   default_role = upper(each.value.default_role)
   disabled     = each.value.disabled
   comment      = each.value.comment
-  default_database = each.value.default_database != null ? upper(each.value.default_database) : null
-  default_schema   = each.value.default_schema != null ? upper(each.value.default_schema) : null
-  user_type        = each.value.user_type
+  default_namespace = each.value.default_database != null && each.value.default_schema != null ? "${upper(each.value.default_database)}.${upper(each.value.default_schema)}" : null
+#  user_type        = each.value.user_type
   rsa_public_key   = each.value.rsa_public_key
   rsa_public_key_2 = each.value.rsa_public_key_2
 
-  # Prevents password collision requirements if an RSA key is assigned
   must_change_password = each.value.rsa_public_key == null ? true : false
+
+  depends_on = [snowflake_schema.managed_schemas]
 }
+
+
 
