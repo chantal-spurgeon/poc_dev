@@ -19,12 +19,10 @@ terraform {
 # ==============================================================================
 variable "snowflake_organization" {
   type = string
-  default = "NXMEPIV"
 }
 
 variable "snowflake_account" {
   type = string
-  default = "QGB61660"
 }
 
 variable "snowflake_user" {
@@ -33,7 +31,6 @@ variable "snowflake_user" {
 
 variable "snowflake_authenticator" {
   type    = string
-  default = "SNOWFLAKE_JWT"
 }
 
 variable "snowflake_private_key" {
