@@ -14,10 +14,21 @@ variable "snowflake_user" {
   description = "The Snowflake user running the Terraform execution"
 }
 
+variable "snowflake_role" {
+  type = string
+  default = "ACCOUNTADMIN"
+}
+
 variable "snowflake_authenticator" {
   type        = string
   default     = "SNOWFLAKE_JWT"
   description = "Authentication method (e.g., SNOWFLAKE_JWT)"
+}
+
+variable "snowflake_password" {
+  type = string
+  default = null
+  sensitive = true
 }
 
 variable "snowflake_private_key" {
@@ -91,14 +102,19 @@ variable "network_policies" {
 # Storage Integrations Map
 variable "storage_integrations" {
   type = map(object({
-    type            = string           # EXTERNAL_STAGE
-    provider        = string           # S3, S3_COMPATIBLE, AZURE, GCS
+    provider                  = string
     storage_allowed_locations = list(string)
+
+    # Wrap these attributes in optional() to allow missing keys for specific clouds
+    type                      = optional(string, "EXTERNAL_STAGE")
+    comment                   = optional(string, "")
     storage_blocked_locations = optional(list(string), [])
-    storage_aws_role_arn      = optional(string, null) # Required for AWS S3
-    comment         = string
+
+    # Cloud-specific credential targets must be optional too
+    storage_aws_role_arn      = optional(string, null)
+    azure_tenant_id           = optional(string, null)
   }))
-  default = {}
+  description = "Multi-cloud staging integration mapping blocks."
 }
 
 # Custom Security Roles Map

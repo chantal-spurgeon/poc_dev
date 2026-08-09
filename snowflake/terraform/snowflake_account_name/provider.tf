@@ -3,7 +3,7 @@ terraform {
   required_providers {
     snowflake = {
       source  = "snowflakedb/snowflake"
-      version = "~> 0.94.0"
+      version = "~> 2.19.0" # Leverages the absolute latest version features
     }
   }
 
