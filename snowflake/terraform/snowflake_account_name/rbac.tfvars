@@ -10,7 +10,7 @@ account_roles = {
   "PRODUCER" = {
     comment       = "Role for 3RACHA"
     granted_roles = [] #Optional - roles that are granted to this role
-    granted_users = ["BANGCHAN"]
+    granted_users = ["BANGCHAN","HAN"]
 
     warehouse_privileges = {
       "PRODUCER_WH" = ["USAGE","OPERATE","MONITOR"],

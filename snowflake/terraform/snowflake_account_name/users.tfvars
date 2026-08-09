@@ -12,6 +12,18 @@ users = {
     user_type         = "PERSON" # or SERVICE for application accounts
     comment           = "Leader of Stray Kids"
   },
+  "han" = {
+    login_name        = "han.jisung@jype.com"
+    email             = "han.jisung@jype.com"
+    first_name        = "Jisung"
+    last_name         = "Han"
+    default_role      = "PRODUCER"
+    default_secondary_roles = ["\"ALL\""]
+    default_warehouse = "PRODUCER_WH"
+    default_namespace  = "DB_STRAY_KIDS.CHANS_LAPTOP"
+    user_type         = "PERSON" # or SERVICE for application accounts
+    comment           = "Leader of Stray Kids"
+  },
 
   # Service Account Profile
   "stray_kids_admin" = {
