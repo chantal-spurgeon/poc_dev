@@ -1,6 +1,6 @@
-**Snowflake Terraform Deployment**
+**Snowflake Terragrunt Deployment**
 
-**Make sure Terraform is installed:**
+**Make sure Terraform and Terragrunt are installed:**
 
    `brew tap hashicorp/tap`
 
@@ -23,6 +23,24 @@
    `tfenv use 1.5.0`
  
    `tfenv list`
+
+   `git clone https://github.com/cunymatthieu/tgenv.git ~/.tgenv`
+   
+   `echo 'export PATH="$HOME/.tgenv/bin:$PATH"' >> ~/.bash_profile`
+   
+   `echo 'export PATH="$HOME/.tgenv/bin:$PATH"' >> ~/.profile`
+   
+   `ln -s ~/.tgenv/bin/* /usr/local/bin`
+   
+   `. ~/.bash_profile`
+   
+   `tgenv list-remote`
+   
+   `tgenv install 1.0.0`
+   
+   `tgenv list`
+   
+   `tgenv use 1.0.0` 
 
  
 ****************
@@ -68,27 +86,23 @@ In Snowflake as ACCOUNTADMIN:
 
 ****************
 
+Under each individual resource (order databases, integrations, security, warehouses, users, rbac):
+
 **Plan and run**
 
-`terraform init`
+`terragrunt init`
 
 
 To run plan (from within the snowflake account directory):
 
-`terraform plan 
--var-file="databases.tfvars" 
--var-file="warehouses.tfvars" 
--var-file="security.tfvars" 
--var-file="integrations.tfvars" 
--var-file="rbac.tfvars" 
--var-file="users.tfvars"`
+`terragrunt plan"`
 
 To apply (from within the snowflake account directory):
 
-`terraform apply 
--var-file="databases.tfvars" 
--var-file="warehouses.tfvars" 
--var-file="security.tfvars" 
--var-file="integrations.tfvars" 
--var-file="rbac.tfvars" 
--var-file="users.tfvars"`
+`terragrunt apply`
+
+To import resources (example):
+
+`terragrunt import 'snowflake_database.managed_dbs["db_stray_kids"]' 'DB_STRAY_KIDS'`
+
+Note that this version does not have a state file because there is no bucket assigned. To assign a bucket, update root.hcl file.
