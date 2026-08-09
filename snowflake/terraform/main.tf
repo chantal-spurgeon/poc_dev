@@ -47,7 +47,7 @@ locals {
     ]
   ])...)
 
-  # FIX: Prevent the loop from executing before the schema exists in state,
+  # Prevent the loop from executing before the schema exists in state,
   # and filter out empty collections
   filtered_all_grants = {
     for k, v in local.raw_all_grants : k => v
@@ -86,11 +86,12 @@ locals {
   }
 }
 
+############################################################################################
 ######## databases.tfvars ########
+############################################################################################
 # Provision standard primary Databases (where is_replica is false)
 resource "snowflake_database" "managed_dbs" {
   for_each = { for k, v in var.databases : k => v if !lookup(v, "is_replica", false) }
-
   name                        = upper(each.key)
   comment                     = each.value.comment
   data_retention_time_in_days = each.value.data_retention_time_days
@@ -100,7 +101,6 @@ resource "snowflake_database" "managed_dbs" {
 # Provision secondary replicated Databases (where is_replica is true)
 resource "snowflake_secondary_database" "managed_replicas" {
   for_each = { for k, v in var.databases : k => v if lookup(v, "is_replica", false) }
-
   name           = upper(each.key)
   comment        = each.value.comment
 
@@ -130,11 +130,13 @@ resource "snowflake_schema" "managed_schemas" {
   with_managed_access = each.value.managed_access
 }
 
+
+############################################################################################
 ######## warehouses.tfvars ########
+############################################################################################
 # Provision Warehouses dynamically from variables file mapping
 resource "snowflake_warehouse" "managed_whs" {
   for_each = var.warehouses
-
   name                = upper(each.key)
   warehouse_size      = each.value.warehouse_size
   auto_suspend        = each.value.auto_suspend
@@ -147,22 +149,26 @@ resource "snowflake_warehouse" "managed_whs" {
   scaling_policy    = each.value.scaling_policy
 }
 
+
+############################################################################################
 ######## security.tfvars ########
+############################################################################################
 # Provision Network Protection Policies
 resource "snowflake_network_policy" "security_policies" {
   for_each = var.network_policies
-
   name            = upper(each.key)
   allowed_ip_list = each.value.allowed_ip_list
   blocked_ip_list = each.value.blocked_ip_list
   comment         = each.value.comment
 }
 
+
+############################################################################################
 ######## integrations.tfvars ########
+############################################################################################
 # Provision Secure Storage Connectors
 resource "snowflake_storage_integration" "cloud_links" {
   for_each = var.storage_integrations
-
   name                      = upper(each.key)
   type                      = each.value.type
   storage_provider          = each.value.provider
@@ -175,7 +181,10 @@ resource "snowflake_storage_integration" "cloud_links" {
   comment                   = each.value.comment
 }
 
+
+############################################################################################
 ######## rbac.tfvars ########
+############################################################################################
 # Provision the core roles
 resource "snowflake_account_role" "rbac_roles" {
   # FIX: Filter out native, system-defined Snowflake roles
@@ -183,7 +192,6 @@ resource "snowflake_account_role" "rbac_roles" {
     for role_key, role_val in var.account_roles : role_key => role_val
     if !contains(["ACCOUNTADMIN", "SYSADMIN", "SECURITYADMIN", "USERADMIN", "PUBLIC"], upper(role_key))
   }
-
   name    = upper(each.key)
   comment = each.value.comment
 }
@@ -230,7 +238,6 @@ resource "snowflake_grant_account_role" "user_to_role_grants" {
   ]
 }
 
-
 # Account-Level Privileges
 resource "snowflake_grant_privileges_to_account_role" "account_grants" {
   for_each = merge([
@@ -273,13 +280,10 @@ resource "snowflake_grant_privileges_to_account_role" "database_grants" {
 }
 
 # Schema-Level Privileges
-
 # Standard Schema-Level Privileges (USAGE, CREATE TABLE, etc.)
 resource "snowflake_grant_privileges_to_account_role" "schema_grants" {
   for_each = local.standard_schema_grants
-
   account_role_name = snowflake_account_role.rbac_roles[each.value.role].name
-
   on_schema {
     schema_name = "\"${each.value.db_name}\".\"${each.value.schema_name}\""
   }
@@ -312,12 +316,10 @@ resource "snowflake_grant_ownership" "schema_ownership" {
   }
 }
 
-
 # Bulk Current Objects Grants (Handles TABLES, VIEWS, etc.)
 resource "snowflake_grant_privileges_to_account_role" "bulk_all_grants" {
   # Use the pre-filtered timing-safe map
   for_each = local.filtered_all_grants
-
   account_role_name = snowflake_account_role.rbac_roles[each.value.role].name
 
   # Ensure your target parameters point securely to current objects
@@ -339,15 +341,11 @@ resource "snowflake_grant_privileges_to_account_role" "bulk_all_grants" {
   depends_on = [snowflake_schema.managed_schemas]
 }
 
-
-
 # Bulk Future Object Privileges (FUTURE Tables, Views, Stages, Tasks, etc.)
 resource "snowflake_grant_privileges_to_account_role" "bulk_future_grants" {
-  # 1. Use the pre-filtered timing-safe map
+  # Use the pre-filtered timing-safe map
   for_each = local.filtered_future_grants
-
   account_role_name = snowflake_account_role.rbac_roles[each.value.role].name
-
   on_schema_object {
     future {
       object_type_plural = each.value.plural_type
@@ -355,7 +353,7 @@ resource "snowflake_grant_privileges_to_account_role" "bulk_future_grants" {
     }
   }
 
-  # 2. Strip OWNERSHIP *AND* invalid view modification privileges completely
+  # Strip OWNERSHIP *AND* invalid view modification privileges completely
   privileges = [
     for p in each.value.privileges : p
     if upper(p) != "OWNERSHIP" && !(
@@ -412,7 +410,10 @@ resource "snowflake_grant_privileges_to_account_role" "integration_grants" {
   depends_on = [snowflake_storage_integration.cloud_links]
 }
 
+
+############################################################################################
 ######## users.tfvars ########
+############################################################################################
 # Provision all users (Humans and Services) via the single official resource
 resource "snowflake_user" "corporate_users" {
   for_each = var.users

@@ -1,5 +1,5 @@
 # Call the parent directory module where your logic lives
-# accounts/dev_account/main.tf (Local subfolder file)
+# terraform/snowflake_account_name/main.tf (Local subfolder file)
 
 module "snowflake_infrastructure" {
   source = "../" # Points back to your root directory logic

@@ -69,7 +69,7 @@ account_roles = {
   # Administrative system role
   "SECURITY_ADMIN_CUSTOM" = {
     comment       = "Custom operational role designed to monitor security metrics"
-    granted_roles = []
+    granted_roles = ["SECURITYADMIN"]
     granted_users = ["BANGCHAN"]
   },
 
