@@ -95,7 +95,7 @@ Under each individual resource (order databases, integrations, security, warehou
 
 To run plan (from within the snowflake account directory):
 
-`terragrunt plan"`
+`terragrunt plan`
 
 To apply (from within the snowflake account directory):
 
