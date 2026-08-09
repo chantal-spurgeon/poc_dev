@@ -10,6 +10,7 @@ module "snowflake_infrastructure" {
   snowflake_user                   = var.snowflake_user
   snowflake_authenticator          = var.snowflake_authenticator
   snowflake_private_key            = var.snowflake_private_key
+  snowflake_private_key_path       = var.snowflake_private_key_path
   snowflake_private_key_passphrase = var.snowflake_private_key_passphrase
 
   # Forward your structural resource configurations

@@ -1,8 +1,16 @@
 account_roles = {
-  "producer" = {
+  "SYSADMIN" = {
+    # SYSADMIN is the parent that inherits the custom child roles
+    comment       = "Native Snowflake system administrator role"
+    granted_roles = ["PRODUCER",
+                     "SECURITY_ADMIN_CUSTOM"]
+    schema_privileges = {} # Pass an empty map so it satisfies the type schema
+  },
+
+  "PRODUCER" = {
     comment       = "Role for 3RACHA"
-    granted_roles = [] #Optional - roles that are granted this role
-    granted_users = ["BANGCHAN","HAN","CHANGBIN"]
+    granted_roles = [] #Optional - roles that are granted to this role
+    granted_users = ["BANGCHAN"]
 
     warehouse_privileges = {
       "PRODUCER_WH" = ["USAGE","OPERATE","MONITOR"],
@@ -11,10 +19,10 @@ account_roles = {
       "AWS_S3_DATA_LAKE" = ["USAGE"],
     }
     database_privileges = {
-      "DB_STRAY_KIDS" = ["OWNERSHIP"],
+      "DB_STRAY_KIDS" = ["USAGE"],
     }
     schema_privileges = {
-      "DB_STRAY_KIDS.CHANS_LAPTOP" = ["OWNERSHIP"],
+      "DB_STRAY_KIDS.CHANS_LAPTOP" = ["OWNERSHIP","USAGE"],
       "DB_STRAY_KIDS.COMBACKS"    = ["USAGE", "MODIFY", "CREATE TABLE"],
     }
     # Automatically grant SELECT on any table or view added to CORE_MART later
@@ -58,7 +66,7 @@ account_roles = {
   },
 
   # Administrative system role
-  "security_admin_custom" = {
+  "SECURITY_ADMIN_CUSTOM" = {
     comment       = "Custom operational role designed to monitor security metrics"
     granted_roles = []
     granted_users = ["BANGCHAN"]
