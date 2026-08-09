@@ -108,17 +108,31 @@ To import resources (example):
 Note that this version does not have a state file because there is no bucket assigned. To assign a bucket, update root.hcl file.
 
 snowflake/
-├──terragrunt/                       
+
+├──terragrunt/ 
+
 │   ├── main.tf                      # Combined, decoupled logic (Safe for zero-state runs)
+
 │   ├── provider.tf                  # Blank file (Terragrunt overrides this)
+
 │   └── variables.tf                 # Complete map register with empty defaults
-└── live/                            
+
+└── live/ 
+
     ├── terragrunt.hcl               # Root engine (Injects state, generates dynamic backends)
-    └── snowflake_account_name/      
+    
+    └── snowflake_account_name/  
+    
         ├── account.hcl              # Central configurations (Keys, authentication types)
+        
         ├── databases/               # terragrunt apply (Manages DBs & Schemas)
+        
         ├── integrations/            # terragrunt apply (Manages Cloud Storage pipes)
+        
         ├── warehouses/              # terragrunt apply (Manages Compute engines)
+        
         ├── security/                # terragrunt apply (Manages IPs and policies)
+        
         ├── users/                   # terragrunt apply (Manages accounts)
+        
         └── rbac/                    # terragrunt apply (Manages ALL cross-grants securely)
