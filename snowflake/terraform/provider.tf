@@ -10,13 +10,16 @@ terraform {
   }
 }
 
+locals {
+  private_key_path  = "~/.ssh/snowflake_key.p8"
+}
+
 # The parent provider block handles all authentication using variables or env inputs
 provider "snowflake" {
-#  organization_name      = var.snowflake_organization
-#  account_name           = var.snowflake_account
+  account                = var.snowflake_account
   user                   = var.snowflake_user
-#  authenticator          = var.snowflake_authenticator
-  private_key            = var.snowflake_private_key
+  authenticator          = "JWT"
+  private_key            = file(local.private_key_path)
   private_key_passphrase = var.snowflake_private_key_passphrase
 }
 

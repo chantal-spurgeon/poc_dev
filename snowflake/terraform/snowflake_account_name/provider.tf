@@ -7,6 +7,7 @@ terraform {
     }
   }
 
+
 #  backend "s3" {
 #    bucket         = "corporate-terraform-states"
 #    key            = "snowflake/accounts/dev_account/terraform.tfstate"
@@ -36,6 +37,11 @@ variable "snowflake_authenticator" {
 }
 
 variable "snowflake_private_key" {
+  type      = string
+  sensitive = true
+}
+
+variable "snowflake_private_key_path" {
   type      = string
   sensitive = true
 }

@@ -18,17 +18,17 @@ databases = {
     }
   },
 
-  # A replicated secondary database (Failover/DR copy)
-  "db_stray_kids_replica" = {
-    comment                  = "Disaster Recovery Archive."
-    data_retention_time_days = 1
-    is_transient            = true
-    is_replica            = true
-    primary_database_path = "MY_ORG_NAME.PRIMARY_PROD_ACCOUNT.ANALYTICS_DB"
+#  # A replicated secondary database (Failover/DR copy)
+#  "db_stray_kids_replica" = {
+#    comment                  = "Disaster Recovery Archive."
+#    data_retention_time_days = 1
+#    is_transient            = true
+#    is_replica            = true
+#    primary_database_path = "MY_ORG_NAME.PRIMARY_PROD_ACCOUNT.ANALYTICS_DB"
 
-    # Schemas are read-only on replicas and managed by replication sync,
-    # so we leave the schemas map blank for this entry.
-    schemas = {}
-  },
+#    # Schemas are read-only on replicas and managed by replication sync,
+#    # so we leave the schemas map blank for this entry.
+#    schemas = {}
+#  },
 
 }

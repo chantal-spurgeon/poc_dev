@@ -1,3 +1,91 @@
+locals {
+   # Flatten the nested loops into a single map
+    schema_grants_base = merge([
+      for role_key, role_val in var.account_roles : {
+        for target_path, privileges in role_val.schema_privileges :
+        "${role_key}_SCHEMA_${target_path}" => {
+          role        = upper(role_key)
+          db_name     = upper(split(".", target_path)[0])
+          schema_name = upper(split(".", target_path)[1])
+          privileges  = privileges
+        }
+      }
+    ]...)
+
+    standard_schema_grants = {
+      for k, v in local.schema_grants_base : k => v
+      if contains(keys(snowflake_schema.managed_schemas), "${v.db_name}.${v.schema_name}") &&
+      length([for p in v.privileges : p if upper(p) != "OWNERSHIP" && upper(p) != "MODIFY"]) > 0
+    }
+
+   # Filter down to keys that explicitly request "OWNERSHIP"
+   ownership_schema_grants = {
+     for k, v in local.schema_grants_base : k => v
+     if contains([for p in v.privileges : upper(p)], "OWNERSHIP")
+   }
+
+  # Your existing raw 'all' grants flattening loop
+  raw_all_grants = merge(flatten([
+    for role_key, role_val in var.account_roles : [
+      for type, mappings in {
+        "TABLES"     = role_val.all_table_privileges
+        "VIEWS"      = role_val.all_view_privileges
+        "PROCEDURES" = role_val.all_procedure_privileges
+        "FUNCTIONS"  = role_val.all_function_privileges
+        "TASKS"      = role_val.all_task_privileges
+        "STAGES"     = role_val.all_stage_privileges
+      } : {
+        for target_path, privileges in mappings :
+        "${role_key}_ALL_${type}_${target_path}" => {
+          role        = upper(role_key)
+          plural_type = type
+          db_name     = upper(split(".", target_path)[0])
+          schema_name = upper(split(".", target_path)[1])
+          privileges  = privileges
+        }
+      }
+    ]
+  ])...)
+
+  # FIX: Prevent the loop from executing before the schema exists in state,
+  # and filter out empty collections
+  filtered_all_grants = {
+    for k, v in local.raw_all_grants : k => v
+    if contains(keys(snowflake_schema.managed_schemas), "${v.db_name}.${v.schema_name}") &&
+    length([for p in v.privileges : p if upper(p) != "OWNERSHIP"]) > 0
+  }
+
+  # Flatten the raw variable maps
+  raw_future_grants = merge(flatten([
+    for role_key, role_val in var.account_roles : [
+      for type, mappings in {
+        "TABLES"     = role_val.future_table_privileges
+        "VIEWS"      = role_val.future_view_privileges
+        "PROCEDURES" = role_val.future_procedure_privileges
+        "FUNCTIONS"  = role_val.future_function_privileges
+        "TASKS"      = role_val.future_task_privileges
+        "STAGES"     = role_val.future_stage_privileges
+      } : {
+        for target_path, privileges in mappings :
+        "${role_key}_ALL_${type}_${target_path}" => {
+          role        = upper(role_key)
+          plural_type = type
+          db_name     = upper(split(".", target_path)[0])
+          schema_name = upper(split(".", target_path)[1])
+          privileges  = privileges
+        }
+      }
+    ]
+  ])...)
+
+  # Filter out entries targeting schemas that don't exist yet, or have empty privileges
+  filtered_future_grants = {
+    for k, v in local.raw_future_grants : k => v
+    if contains(keys(snowflake_schema.managed_schemas), "${v.db_name}.${v.schema_name}") &&
+    length([for p in v.privileges : p if upper(p) != "OWNERSHIP"]) > 0
+  }
+}
+
 ######## databases.tfvars ########
 # Provision standard primary Databases (where is_replica is false)
 resource "snowflake_database" "managed_dbs" {
@@ -90,7 +178,12 @@ resource "snowflake_storage_integration" "cloud_links" {
 ######## rbac.tfvars ########
 # Provision the core roles
 resource "snowflake_account_role" "rbac_roles" {
-  for_each = var.account_roles
+  # FIX: Filter out native, system-defined Snowflake roles
+  for_each = {
+    for role_key, role_val in var.account_roles : role_key => role_val
+    if !contains(["ACCOUNTADMIN", "SYSADMIN", "SECURITYADMIN", "USERADMIN", "PUBLIC"], upper(role_key))
+  }
+
   name    = upper(each.key)
   comment = each.value.comment
 }
@@ -107,18 +200,19 @@ resource "snowflake_grant_account_role" "role_to_role_grants" {
     }
   ]...)
 
-  # The role receiving the permissions
-  parent_role_name = snowflake_account_role.rbac_roles[each.value.parent_name].name
+  # The role receiving the permissions (The Parent)
+  # Uses a dynamic try() lookup because native roles like SYSADMIN won't exist in rbac_roles
+  parent_role_name = try(snowflake_account_role.rbac_roles[each.value.parent_name].name, each.value.parent_name)
 
-  # The role whose permissions are being inherited
-  # Uses a dynamic string lookup in case the child is a native Snowflake system role (like SYSADMIN)
+  # The role whose permissions are being inherited (The Child)
+  # Uses a dynamic try() lookup so it safely matches both custom and system roles
   role_name        = try(snowflake_account_role.rbac_roles[each.value.child_name].name, each.value.child_name)
 }
 
 # Flatten and map the User-to-Role assignments
 # User-to-Role assignments matrix
 resource "snowflake_grant_account_role" "user_to_role_grants" {
-  for_each = merge([
+  for_each = merge(flatten([
     for role_name, configurations in var.account_roles : {
       for user_name in configurations.granted_users :
       "${user_name}_ASSIGNED_TO_${role_name}" => {
@@ -126,7 +220,7 @@ resource "snowflake_grant_account_role" "user_to_role_grants" {
         user_target = upper(user_name)
       }
     }
-  ]...)
+  ])...)
 
   role_name = snowflake_account_role.rbac_roles[each.value.role_target].name
   user_name = each.value.user_target
@@ -179,18 +273,10 @@ resource "snowflake_grant_privileges_to_account_role" "database_grants" {
 }
 
 # Schema-Level Privileges
+
+# Standard Schema-Level Privileges (USAGE, CREATE TABLE, etc.)
 resource "snowflake_grant_privileges_to_account_role" "schema_grants" {
-  for_each = merge([
-    for role_key, role_val in var.account_roles : {
-      for target_path, privileges in role_val.schema_privileges :
-      "${role_key}_SCHEMA_${target_path}" => {
-        role        = upper(role_key)
-        db_name     = upper(split(".", target_path)[0])
-        schema_name = upper(split(".", target_path)[1])
-        privileges  = privileges
-      }
-    }
-  ]...)
+  for_each = local.standard_schema_grants
 
   account_role_name = snowflake_account_role.rbac_roles[each.value.role].name
 
@@ -198,37 +284,43 @@ resource "snowflake_grant_privileges_to_account_role" "schema_grants" {
     schema_name = "\"${each.value.db_name}\".\"${each.value.schema_name}\""
   }
 
-  privileges = each.value.privileges
+  # Filter out OWNERSHIP so only standard privileges pass through
+    privileges = [
+      for p in each.value.privileges : p
+      if upper(p) != "OWNERSHIP" && upper(p) != "MODIFY"
+    ]
+
   depends_on = [snowflake_schema.managed_schemas]
 }
 
-# Bulk Existing Object Privileges (ALL Tables, Views, Stages, Tasks, etc.)
+# Dedicated Schema-Level Ownership Transfers
+resource "snowflake_grant_ownership" "schema_ownership" {
+  # Meta-arguments (for_each, depends_on) belong right at the top
+  for_each   = local.ownership_schema_grants
+  depends_on = [snowflake_schema.managed_schemas]
+
+  # Main target configuration
+  account_role_name = snowflake_account_role.rbac_roles[each.value.role].name
+
+  # Outbound privilege behavior: COPY keeps downstream grants; REVOKE wipes them
+  outbound_privileges = "COPY"
+
+  # Target assignment configuration block
+  on {
+    object_type = "SCHEMA"
+    object_name = "\"${each.value.db_name}\".\"${each.value.schema_name}\""
+  }
+}
+
+
+# Bulk Current Objects Grants (Handles TABLES, VIEWS, etc.)
 resource "snowflake_grant_privileges_to_account_role" "bulk_all_grants" {
-  for_each = merge([
-    for role_key, role_val in var.account_roles : [
-      for type, mappings in {
-        "TABLES"     = role_val.all_table_privileges
-        "VIEWS"      = role_val.all_view_privileges
-        "PROCEDURES" = role_val.all_procedure_privileges
-        "FUNCTIONS"  = role_val.all_function_privileges
-        "TASKS"      = role_val.all_task_privileges
-        "STAGES"     = role_val.all_stage_privileges
-      } : {
-        for target_path, privileges in mappings :
-        "${role_key}_ALL_${type}_${target_path}" => {
-          role        = upper(role_key)
-          plural_type = type # Plural form restored (e.g., TABLES, VIEWS)
-          db_name     = upper(split(".", target_path)[0])
-          schema_name = upper(split(".", target_path)[1])
-          privileges  = privileges
-        }
-      }
-    ]
-  ]...)
+  # Use the pre-filtered timing-safe map
+  for_each = local.filtered_all_grants
 
   account_role_name = snowflake_account_role.rbac_roles[each.value.role].name
 
-  # FIX: Object parameters are nested completely inside the 'all' schema block
+  # Ensure your target parameters point securely to current objects
   on_schema_object {
     all {
       object_type_plural = each.value.plural_type
@@ -236,37 +328,26 @@ resource "snowflake_grant_privileges_to_account_role" "bulk_all_grants" {
     }
   }
 
-  privileges = each.value.privileges
+  # FIX: Strip OWNERSHIP *AND* invalid view modification privileges completely
+  privileges = [
+    for p in each.value.privileges : p
+    if upper(p) != "OWNERSHIP" && !(
+      each.value.plural_type == "VIEWS" && contains(["INSERT", "DELETE", "UPDATE", "MODIFY"], upper(p))
+    )
+  ]
+
   depends_on = [snowflake_schema.managed_schemas]
 }
 
+
+
 # Bulk Future Object Privileges (FUTURE Tables, Views, Stages, Tasks, etc.)
 resource "snowflake_grant_privileges_to_account_role" "bulk_future_grants" {
-  for_each = merge([
-    for role_key, role_val in var.account_roles : [
-      for type, mappings in {
-        "TABLES"     = role_val.future_table_privileges
-        "VIEWS"      = role_val.future_view_privileges
-        "PROCEDURES" = role_val.future_procedure_privileges
-        "FUNCTIONS"  = role_val.future_function_privileges
-        "TASKS"      = role_val.future_task_privileges
-        "STAGES"     = role_val.future_stage_privileges
-      } : {
-        for target_path, privileges in mappings :
-        "${role_key}_FUTURE_${type}_${target_path}" => {
-          role        = upper(role_key)
-          plural_type = type # Plural form restored (e.g., TABLES, VIEWS)
-          db_name     = upper(split(".", target_path)[0])
-          schema_name = upper(split(".", target_path)[1])
-          privileges  = privileges
-        }
-      }
-    ]
-  ]...)
+  # 1. Use the pre-filtered timing-safe map
+  for_each = local.filtered_future_grants
 
   account_role_name = snowflake_account_role.rbac_roles[each.value.role].name
 
-  # FIX: Object parameters are nested completely inside the 'future' schema block
   on_schema_object {
     future {
       object_type_plural = each.value.plural_type
@@ -274,7 +355,14 @@ resource "snowflake_grant_privileges_to_account_role" "bulk_future_grants" {
     }
   }
 
-  privileges = each.value.privileges
+  # 2. Strip OWNERSHIP *AND* invalid view modification privileges completely
+  privileges = [
+    for p in each.value.privileges : p
+    if upper(p) != "OWNERSHIP" && !(
+      each.value.plural_type == "VIEWS" && contains(["INSERT", "DELETE", "UPDATE", "MODIFY"], upper(p))
+    )
+  ]
+
   depends_on = [snowflake_schema.managed_schemas]
 }
 
@@ -335,6 +423,7 @@ resource "snowflake_user" "corporate_users" {
   first_name   = each.value.first_name
   last_name    = each.value.last_name
   default_role = upper(each.value.default_role)
+  default_secondary_roles = lookup(each.value, "default_secondary_roles", [])
   disabled     = each.value.disabled
   comment      = each.value.comment
   default_namespace = each.value.default_database != null && each.value.default_schema != null ? "${upper(each.value.default_database)}.${upper(each.value.default_schema)}" : null
@@ -343,6 +432,12 @@ resource "snowflake_user" "corporate_users" {
   rsa_public_key_2 = each.value.rsa_public_key_2
 
   must_change_password = each.value.rsa_public_key == null ? true : false
+
+  lifecycle {
+    ignore_changes = [
+      default_secondary_roles
+    ]
+  }
 
   depends_on = [snowflake_schema.managed_schemas]
 }

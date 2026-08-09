@@ -17,16 +17,24 @@ export TF_VAR_snowflake_user="JOHN_DOE"
 export TF_VAR_snowflake_authenticator="SNOWFLAKE_JWT"
 
 # Automatically reads your secure local .p8 private key file
-export TF_VAR_snowflake_private_key=$(cat ~/.snowflake/rsa_key.p8)
+export TF_VAR_snowflake_private_key=$(cat ~/.ssh/snowflake_key.p8)
 
 # The decryption passphrase for your private key file
 export TF_VAR_snowflake_private_key_passphrase="YourSecureKeyPassphraseHere"
 
 
 terraform plan \
--var-file="<snowflakeaccount>/databases.tfvars" \
--var-file="<snowflakeaccount>/warehouses.tfvars" \
--var-file="<snowflakeaccount>/security.tfvars" \
--var-file="<snowflakeaccount>/integrations.tfvars" \
--var-file="<snowflakeaccount>/rbac.tfvars" \
--var-file="<snowflakeaccount>/users.tfvars"
+-var-file="databases.tfvars" \
+-var-file="warehouses.tfvars" \
+-var-file="security.tfvars" \
+-var-file="integrations.tfvars" \
+-var-file="rbac.tfvars" \
+-var-file="users.tfvars"
+
+terraform apply \
+-var-file="databases.tfvars" \
+-var-file="warehouses.tfvars" \
+-var-file="security.tfvars" \
+-var-file="integrations.tfvars" \
+-var-file="rbac.tfvars" \
+-var-file="users.tfvars"

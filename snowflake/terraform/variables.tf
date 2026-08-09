@@ -26,6 +26,12 @@ variable "snowflake_private_key" {
   description = "The raw unencrypted or encrypted private key string structure"
 }
 
+variable "snowflake_private_key_path" {
+  type        = string
+  sensitive   = true
+  description = "The raw unencrypted or encrypted private key string structure"
+}
+
 variable "snowflake_private_key_passphrase" {
   type        = string
   sensitive   = true
