@@ -84,6 +84,35 @@ locals {
     if contains(keys(snowflake_schema.managed_schemas), "${v.db_name}.${v.schema_name}") &&
     length([for p in v.privileges : p if upper(p) != "OWNERSHIP"]) > 0
   }
+
+  # Filters down to standard human user accounts
+  human_users = {
+    for k, v in var.users : k => v
+    if lookup(v, "user_type", "PERSON") == "PERSON"
+  }
+
+  service_users = {
+    for k, v in var.users : k => v
+    if lookup(v, "user_type", "PERSON") == "SERVICE"
+  }
+
+  # Filters down to AWS storage integrations
+  aws_integrations = {
+    for k, v in var.storage_integrations : k => v
+    if upper(v.provider) == "S3" || upper(v.provider) == "AWS"
+  }
+
+  # Filters down to Azure storage integrations (if any exist in your tfvars)
+  azure_integrations = {
+    for k, v in var.storage_integrations : k => v
+    if upper(v.provider) == "AZURE"
+  }
+
+  # Filters down to Google Cloud storage integrations (if any exist in your tfvars)
+  gcs_integrations = {
+    for k, v in var.storage_integrations : k => v
+    if upper(v.provider) == "GCS" || upper(v.provider) == "GOOGLE"
+  }
 }
 
 ############################################################################################
@@ -167,18 +196,43 @@ resource "snowflake_network_policy" "security_policies" {
 ######## integrations.tfvars ########
 ############################################################################################
 # Provision Secure Storage Connectors
-resource "snowflake_storage_integration" "cloud_links" {
-  for_each = var.storage_integrations
-  name                      = upper(each.key)
-  type                      = each.value.type
-  storage_provider          = each.value.provider
-  storage_allowed_locations = each.value.storage_allowed_locations
-  storage_blocked_locations = each.value.storage_blocked_locations
+# AWS S3 Storage Integrations
+resource "snowflake_storage_integration_aws" "cloud_links" {
+  for_each = local.aws_integrations
+  name    = upper(each.key)
+  enabled = true
+  comment = lookup(each.value, "comment", null)
 
-  # AWS Role attachment pattern
+  # Add this exact required string configuration argument
+  storage_provider          = "S3"
+  storage_allowed_locations = each.value.storage_allowed_locations
+  storage_blocked_locations = lookup(each.value, "storage_blocked_locations", null)
   storage_aws_role_arn      = each.value.storage_aws_role_arn
+}
+
+
+# Azure Storage Integrations (Optional: Safe to include even if empty)
+resource "snowflake_storage_integration_azure" "cloud_links" {
+  for_each = local.azure_integrations
+  name                      = upper(each.key)
   enabled                   = true
-  comment                   = each.value.comment
+  comment                   = lookup(each.value, "comment", null)
+  storage_allowed_locations = each.value.storage_allowed_locations
+  storage_blocked_locations = lookup(each.value, "storage_blocked_locations", null)
+
+  # Azure Specific parameters
+  azure_tenant_id           = each.value.azure_tenant_id
+}
+
+# Dedicated Google Cloud Storage (GCS) Integrations
+resource "snowflake_storage_integration_gcs" "cloud_links" {
+  for_each = local.gcs_integrations
+
+  name                      = upper(each.key)
+  enabled                   = true
+  comment                   = lookup(each.value, "comment", null)
+  storage_allowed_locations = each.value.storage_allowed_locations
+  storage_blocked_locations = lookup(each.value, "storage_blocked_locations", null)
 }
 
 
@@ -224,19 +278,32 @@ resource "snowflake_grant_account_role" "user_to_role_grants" {
     for role_name, configurations in var.account_roles : {
       for user_name in configurations.granted_users :
       "${user_name}_ASSIGNED_TO_${role_name}" => {
-        role_target = upper(role_name)
-        user_target = upper(user_name)
+        # Keep lowercase key for resource block lookups, but upper for raw fallbacks
+        role_target     = upper(role_name)
+        user_target     = upper(user_name)
+        user_lookup_key = lower(user_name)
       }
     }
   ])...)
 
+  # Safe lookup for the target RBAC role name
   role_name = snowflake_account_role.rbac_roles[each.value.role_target].name
-  user_name = each.value.user_target
 
+  # Safely read the resource name from whichever pool the user belongs to.
+  # If the user is unmanaged or a native system user, fall back to the raw string.
+  user_name = try(
+    snowflake_user.corporate_users[each.value.user_lookup_key].name,
+    snowflake_service_user.service_accounts[each.value.user_lookup_key].name,
+    each.value.user_target
+  )
+
+  # Depend on both human and service user resource blocks
   depends_on = [
-    snowflake_user.corporate_users
+    snowflake_user.corporate_users,
+    snowflake_service_user.service_accounts
   ]
 }
+
 
 # Account-Level Privileges
 resource "snowflake_grant_privileges_to_account_role" "account_grants" {
@@ -407,7 +474,11 @@ resource "snowflake_grant_privileges_to_account_role" "integration_grants" {
   }
   privileges = each.value.privileges
 
-  depends_on = [snowflake_storage_integration.cloud_links]
+  depends_on = [
+    snowflake_storage_integration_aws.cloud_links,
+    snowflake_storage_integration_azure.cloud_links,
+    snowflake_storage_integration_gcs.cloud_links
+  ]
 }
 
 
@@ -415,33 +486,59 @@ resource "snowflake_grant_privileges_to_account_role" "integration_grants" {
 ######## users.tfvars ########
 ############################################################################################
 # Provision all users (Humans and Services) via the single official resource
+# Standard Human User Accounts (USER_TYPE = PERSON)
 resource "snowflake_user" "corporate_users" {
-  for_each = var.users
-
+  for_each = local.human_users
   name         = upper(each.key)
   login_name   = each.value.login_name
   email        = each.value.email
-  first_name   = each.value.first_name
-  last_name    = each.value.last_name
-  default_role = upper(each.value.default_role)
-  default_secondary_roles = lookup(each.value, "default_secondary_roles", [])
-  disabled     = each.value.disabled
-  comment      = each.value.comment
-  default_namespace = each.value.default_database != null && each.value.default_schema != null ? "${upper(each.value.default_database)}.${upper(each.value.default_schema)}" : null
-#  user_type        = each.value.user_type
-  rsa_public_key   = each.value.rsa_public_key
-  rsa_public_key_2 = each.value.rsa_public_key_2
+  first_name   = lookup(each.value, "first_name", null)
+  last_name    = lookup(each.value, "last_name", null)
+  disabled     = lookup(each.value, "disabled", false)
+  comment      = lookup(each.value, "comment", null)
 
-  must_change_password = each.value.rsa_public_key == null ? true : false
+  default_role            = each.value.default_role != null ? upper(each.value.default_role) : null
+  #default_secondary_roles = lookup(each.value, "default_secondary_roles", [])
+  default_secondary_roles_option = contains(lookup(each.value, "default_secondary_roles", []), "ALL") ? "ALL" : "NONE"
+  default_namespace = lookup(each.value, "default_database", null) != null && lookup(each.value, "default_schema", null) != null ? "${upper(each.value.default_database)}.${upper(each.value.default_schema)}" : null
+
+  # Humans using passwords must change them on first login; key-pair users do not
+  must_change_password = lookup(each.value, "rsa_public_key", null) == null ? true : false
 
   lifecycle {
-    ignore_changes = [
-      default_secondary_roles
-    ]
+    ignore_changes = [default_secondary_roles_option]
   }
 
   depends_on = [snowflake_schema.managed_schemas]
 }
+
+# Dedicated Machine Service Accounts (USER_TYPE = SERVICE)
+resource "snowflake_service_user" "service_accounts" {
+  for_each = local.service_users
+  name       = upper(each.key)
+  login_name = each.value.login_name
+  email      = each.value.email
+  disabled   = lookup(each.value, "disabled", false)
+  comment    = lookup(each.value, "comment", null)
+
+  default_role            = each.value.default_role != null ? upper(each.value.default_role) : null
+  #default_secondary_roles = lookup(each.value, "default_secondary_roles", [])
+  default_secondary_roles_option = contains(lookup(each.value, "default_secondary_roles", []), "ALL") ? "ALL" : "NONE"
+  default_namespace = lookup(each.value, "default_database", null) != null && lookup(each.value, "default_schema", null) != null ? "${upper(each.value.default_database)}.${upper(each.value.default_schema)}" : null
+
+  # Key-Pair Cryptography attributes supported natively by Service Users
+  rsa_public_key   = lookup(each.value, "rsa_public_key", null)
+  rsa_public_key_2 = lookup(each.value, "rsa_public_key_2", null)
+
+  lifecycle {
+    ignore_changes = [default_secondary_roles_option]
+  }
+
+  depends_on = [snowflake_schema.managed_schemas]
+}
+
+
+
 
 
 
