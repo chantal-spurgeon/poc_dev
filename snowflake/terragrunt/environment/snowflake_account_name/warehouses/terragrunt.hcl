@@ -1,16 +1,16 @@
-# live/snowflake_account_name/warehouses/terragrunt.hcl
+# environment/snowflake_account_name/warehouses/terragrunt.hcl
 
-# 1. Inherit the global backend, account settings, and Snowflake providers
+# Inherit the global backend, account settings, and Snowflake providers
 include "root" {
   path   = find_in_parent_folders("root.hcl")
 }
 
-# 2. Point to your monolithic terraform source directory
+# Point to your monolithic terraform source directory
 terraform {
   source = "${get_repo_root()}//snowflake/terragrunt"
 }
 
-# 3. Inject your warehouses configuration directly into the inputs block
+# Inject your warehouses configuration directly into the inputs block
 inputs = {
   warehouses = {
     "producer8_wh" = {

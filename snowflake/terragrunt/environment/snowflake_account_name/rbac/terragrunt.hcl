@@ -1,4 +1,4 @@
-# live/snowflake_account_name/rbac/terragrunt.hcl
+# environment/snowflake_account_name/rbac/terragrunt.hcl
 
 include "root" {
   path = find_in_parent_folders("root.hcl")

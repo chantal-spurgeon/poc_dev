@@ -1,4 +1,4 @@
-# live/snowflake_account_name/databases/terragrunt.hcl
+# environment/snowflake_account_name/databases/terragrunt.hcl
 
 include "root" {
   path   = find_in_parent_folders("root.hcl")
@@ -9,7 +9,6 @@ terraform {
 }
 
 inputs = {
-  # Paste your exact map structure directly here inside the inputs block
   databases = {
     "db_stray_kids8" = {
       comment                  = "Production chaos."
@@ -35,7 +34,7 @@ inputs = {
 #      data_retention_time_days = 1
 #      is_transient            = true
 #      is_replica              = true
-#      primary_database_path    = "MY_ORG_NAME.PRIMARY_PROD_ACCOUNT.ANALYTICS_DB"
+#      primary_database_path    = "MY_ORG_NAME.PRIMARY_PROD_ACCOUNT.DATABASE"
 #      schemas                  = {}
 #    },
   }
