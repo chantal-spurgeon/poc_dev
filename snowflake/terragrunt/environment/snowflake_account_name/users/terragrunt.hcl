@@ -1,4 +1,4 @@
-# live/snowflake_account_name/users/terragrunt.hcl
+# environment/snowflake_account_name/users/terragrunt.hcl
 
 include "root" {
   path = find_in_parent_folders("root.hcl")
@@ -19,6 +19,7 @@ inputs = {
       default_secondary_roles = ["\"ALL\""]
       default_warehouse       = "PRODUCER8_WH"
       default_namespace       = "DB_STRAY_KIDS8.CHANS_LAPTOP"
+      network_policy          = null
       user_type               = "PERSON"
       comment                 = "Leader of Stray Kids"
 
@@ -35,6 +36,7 @@ inputs = {
       default_secondary_roles = ["\"ALL\""]
       default_warehouse       = "PRODUCER8_WH"
       default_namespace       = "DB_STRAY_KIDS8.CHANS_LAPTOP"
+      network_policy          = "CORPORATE_VPN_ONLY"
       user_type               = "SERVICE"
       comment                 = "Stray Kids Service Account"
       rsa_public_key          = "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEArSLIeQeToXiKeza8EAE+O46/4qAK6WnNE1gqbkQbwF9LWi/6uoTxNpY/DGNbM2Qbzr1RQO7CZb3CsklGh39ry2HOTXnRAQRXiiVQgNlson9twYU9mgpVjWO9j1kK1BQdLwp//QuYoywU+Mrm32xACiUoX1TX8hz54PcjAX92RRQ+IrCTY42THTBycUu95thf3uXKSHlmy6xzdLXdFeU2Yebf73OpmBeCfHDDGYNiDOLgZnay/JfVQAKQwuwSHWCxAcgt7etZ9QJqfAhMOT4q4AB7f4C5vgAEUq4xhhPELdCa42vT6KC7WnbLGvu6Govv1sL0yK54Wk+ePflx2MXW1wIDAQAB"

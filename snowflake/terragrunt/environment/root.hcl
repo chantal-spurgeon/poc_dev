@@ -1,4 +1,4 @@
-# live/root.hcl
+# environment/root.hcl
 
 locals {
   # Load the shared account configurations

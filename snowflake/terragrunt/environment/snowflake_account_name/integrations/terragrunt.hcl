@@ -1,4 +1,4 @@
-# live/snowflake_account_name/integrations/terragrunt.hcl
+# environment/snowflake_account_name/integrations/terragrunt.hcl
 
 include "root" {
   path = find_in_parent_folders("root.hcl")
@@ -24,8 +24,7 @@ inputs = {
       type                      = "EXTERNAL_STAGE"
       comment                   = "Google Cloud Storage Integration Staging"
 
-      # MAP HOMOGENIZATION FIX: Explicitly supply a null mapping key
-      # to satisfy the strict map(any) attribute validation check
+      # Explicitly supply a null mapping key to satisfy the strict map(any) attribute validation check
       storage_aws_role_arn      = null
     }
   }

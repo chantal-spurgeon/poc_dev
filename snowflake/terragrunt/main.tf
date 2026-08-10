@@ -18,7 +18,7 @@ locals {
     }
   ]...)
 
-  # ARCHITECTURAL FIX: We cannot check snowflake_schema.managed_schemas directly.
+  # We cannot check snowflake_schema.managed_schemas directly.
   # Instead, we evaluate that the user has provided inputs or we rely on safety checks.
   standard_schema_grants = {
     for k, v in local.schema_grants_base : k => v
@@ -56,7 +56,7 @@ locals {
     ]
   ])...)
 
-  # Decoupled to safely bypass local state resource constraints
+  # Safely bypass local state resource constraints
   filtered_all_grants = {
     for k, v in local.raw_all_grants : k => v
     if length([for p in v.privileges : p if upper(p) != "OWNERSHIP"]) > 0
@@ -87,7 +87,7 @@ locals {
     ]
   ])...)
 
-  # Decoupled to safely bypass local state resource constraints
+  # Safely bypass local state resource constraints
   filtered_future_grants = {
     for k, v in local.raw_future_grants : k => v
     if length([for p in v.privileges : p if upper(p) != "OWNERSHIP"]) > 0
@@ -195,7 +195,7 @@ resource "snowflake_warehouse" "managed_whs" {
   initially_suspended = lookup(each.value, "initially_suspended", true)
   comment             = lookup(each.value, "comment", null)
 
-  # Protects your deployment from crashing if optional scaling parameters are absent
+  # Protects deployment from crashing if optional scaling parameters are absent
   warehouse_type      = lookup(each.value, "warehouse_type", "STANDARD")
   min_cluster_count   = lookup(each.value, "min_cluster_count", 1)
   max_cluster_count   = lookup(each.value, "max_cluster_count", 1)
@@ -212,7 +212,7 @@ resource "snowflake_network_policy" "security_policies" {
   name            = upper(each.key)
   allowed_ip_list = each.value.allowed_ip_list
 
-  # Protects your deployment from crashing if optional keys are omitted
+  # Protects deployment from crashing if optional keys are omitted
   blocked_ip_list = lookup(each.value, "blocked_ip_list", null)
   comment         = lookup(each.value, "comment", null)
 }
@@ -247,7 +247,7 @@ resource "snowflake_storage_integration_azure" "cloud_links" {
   storage_allowed_locations = each.value.storage_allowed_locations
   storage_blocked_locations = lookup(each.value, "storage_blocked_locations", null)
 
-  # DECOUPLED FIX: Secured with lookup fallback to prevent structural validation crashes
+  # Secured with lookup fallback to prevent structural validation crashes
   azure_tenant_id           = lookup(each.value, "azure_tenant_id", null)
 }
 
@@ -292,7 +292,7 @@ resource "snowflake_grant_account_role" "role_to_role_grants" {
     }
   ]...)
 
-  # DECOUPLED FIX: Pass strings directly. This prevents validation crashes
+  # Pass strings directly. This prevents validation crashes
   # when resources don't exist in the active runner's state.
   parent_role_name = each.value.parent_name
   role_name        = each.value.child_name
@@ -314,7 +314,7 @@ resource "snowflake_grant_account_role" "user_to_role_grants" {
     }
   ])...)
 
-  # DECOUPLED FIX: No resource index map lookup logic to crash validation paths
+  # No resource index map lookup logic to crash validation paths
   role_name = each.value.role_target
   user_name = each.value.user_target
 
@@ -413,7 +413,7 @@ resource "snowflake_grant_privileges_to_account_role" "bulk_all_grants" {
   on_schema_object {
     all {
       object_type_plural = each.value.plural_type
-      # SAFE QUOTING FIX: Ensure strict upper-cased parsing to match Snowflake's catalog storage engine
+      # Ensure strict upper-cased parsing to match Snowflake's catalog storage engine
       in_schema          = "\"${upper(each.value.db_name)}\".\"${upper(each.value.schema_name)}\""
     }
   }
@@ -438,7 +438,7 @@ resource "snowflake_grant_privileges_to_account_role" "bulk_future_grants" {
   on_schema_object {
     future {
       object_type_plural = each.value.plural_type
-      # SAFE QUOTING FIX: Ensure strict upper-cased parsing to match Snowflake's catalog storage engine
+      # Ensure strict upper-cased parsing to match Snowflake's catalog storage engine
       in_schema          = "\"${upper(each.value.db_name)}\".\"${upper(each.value.schema_name)}\""
     }
   }
@@ -494,7 +494,7 @@ resource "snowflake_grant_privileges_to_account_role" "integration_grants" {
     }
   ]...)
 
-  # DECOUPLED FIX: Pass the upper-cased key string directly instead of map digging
+  # Pass the upper-cased key string directly instead of map digging
   account_role_name = each.value.role
 
   on_account_object {
@@ -527,7 +527,7 @@ resource "snowflake_user" "corporate_users" {
 
   default_secondary_roles_option = contains(lookup(each.value, "default_secondary_roles", []), "ALL") ? "ALL" : "NONE"
 
-  # COMPATIBILITY FIX: Checks for a direct string 'default_namespace' fallback
+  # Checks for a direct string 'default_namespace' fallback
   # or combines individual db/schema keys if present
   default_namespace = lookup(each.value, "default_namespace", null) != null ? upper(each.value.default_namespace) : (
     lookup(each.value, "default_database", null) != null && lookup(each.value, "default_schema", null) != null ? "${upper(each.value.default_database)}.${upper(each.value.default_schema)}" : null
