@@ -1,0 +1,11 @@
+# Views used in shares must be secure views. But they bypass the optimizer.
+
+# If sharing a view that references another database, grant reference usage on other
+# database to share. Only thing to remember, view can only be shared within the same
+# region if it has reference usage.
+
+# Materialized view (a database object that stores the precomputed results of a query
+# as a physical table) cannot have joins in it.
+
+# Dynamic tables can be used instead of materialized views if you need to use joins.
+# Should now be used instead of materialized views. New standard.

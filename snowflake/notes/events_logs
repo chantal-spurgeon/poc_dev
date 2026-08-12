@@ -1,0 +1,15 @@
+USE ROLE ACCOUNTADMIN;
+
+# Step 1: Ensure an active account-level Event Table is configured
+ALTER ACCOUNT SET EVENT_TABLE = my_database.my_schema.my_event_table;
+
+# Step 2: Set the default account-level log level
+ALTER ACCOUNT SET LOG_LEVEL = 'INFO';
+
+# TRACE: Logs the most detailed messages for granular application behavioral tracking.
+# DEBUG: Logs diagnostic information helpful during application development or troubleshooting.
+# INFO: Logs generic informational messages about normal application execution.
+# WARN: Logs warning events that highlight potential runtime anomalies.
+# ERROR: Logs runtime errors that prevent specific actions but let the application continue running.
+# FATAL: Logs critical, unrecoverable failures that cause immediate execution termination.
+# OFF: Disables all logging completely

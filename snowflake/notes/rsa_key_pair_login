@@ -1,0 +1,13 @@
+#RSA Keys for Snowflake:
+
+# Encrypted - will prompt for passphrase
+openssl genrsa 2048 | openssl pkcs8 -topk8 -v2 des3 -inform PEM -out rsa_key.p8
+
+# Unencrypted
+openssl genrsa 2048 | openssl pkcs8 -topk8 -inform PEM -out rsa_key.p8 -nocrypt
+
+# Public key - will prompt for passphrase above if encrypted
+openssl rsa -in rsa_key.p8 -pubout -out rsa_key.pub
+
+# In Snowflake as ACCOUNTADMIN or SECURITYADMIN
+ALTER USER your_snowflake_username SET RSA_PUBLIC_KEY='MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA...';

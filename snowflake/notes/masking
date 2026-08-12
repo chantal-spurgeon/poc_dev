@@ -1,0 +1,14 @@
+# Sample use of masking
+
+-- Create a policy for email addresses
+CREATE OR REPLACE MASKING POLICY security.policies.email_mask
+AS (val string) RETURNS string ->
+  CASE
+    WHEN CURRENT_ROLE() IN ('ACCOUNTADMIN', 'SECURITYADMIN', 'HR_ROLE') THEN val
+    WHEN CURRENT_ROLE() IN ('ANALYST') THEN REGEXP_REPLACE(val, '.+\\@', '*****@')
+    ELSE '********'
+  END
+  COMMENT = 'Masks email addresses based on user role';
+
+-- Apply the policy to a table column
+ALTER TABLE core.users ALTER COLUMN email SET MASKING POLICY security.policies.email_mask;

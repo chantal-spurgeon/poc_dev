@@ -1,0 +1,9 @@
+# Listings
+
+# Refresh listings associated to DB
+
+SYSTEM$TRIGGER_LISTING_REFRESH( 'DATABASE', '<name>');
+
+# Refresh listing
+
+SYSTEM$TRIGGER_LISTING_REFRESH( 'LISTING', '<name>');

@@ -1,0 +1,29 @@
+# Set up integration for OKTA
+
+use role accountadmin;
+create role if not exists okta_provisioner;
+grant create user on account to role okta_provisioner;
+grant create role on account to role okta_provisioner;
+grant role okta_provisioner to role accountadmin;
+create or replace security integration okta_provisioning
+    type = SCIM
+    scim_client = 'OKTA'
+    run_as_role = 'OKTA_PROVISIONER';
+
+SELECT SYSTEM$GENERATE_SCIM_ACCESS_TOKEN('your_scim_integration_name');
+SELECT upper(current_organization_name())||'-'||upper(current_account_name()); #account identifier
+
+# Provide token to OKTA admin who will provide the info for following script
+# Include identifier and url (org-accountname.snowflake.com)
+
+USE ROLE ACCOUNTADMIN;
+
+CREATE OR REPLACE SECURITY INTEGRATION OKTAINTEGRATION
+  TYPE = SAML2
+  ENABLED = TRUE
+  SAML2_ISSUER = '<Your Okta Entity ID>'
+  SAML2_SSO_URL = '<Your Okta IDP SSO URL>'
+  SAML2_PROVIDER = OKTA
+  SAML2_X509_CERT = '<Your Certificate Text Without BEGIN/END Lines>'
+  SAML2_SP_INITIATED_LOGIN_PAGE_LABEL = 'OKTA SSO'
+  SAML2_ENABLE_SP_INITIATED = TRUE;

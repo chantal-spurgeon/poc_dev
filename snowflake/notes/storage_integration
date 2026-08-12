@@ -1,0 +1,28 @@
+# AWS
+
+# Bucket permissions required:
+
+# s3:GetBucketLocation
+# s3:GetObject
+# s3:GetObjectVersion
+# s3:ListBucket
+
+# STORAGE_AWS_ROLE_ARN - get from AWS once role is created
+
+# Return to AWS
+
+describe integration <integration name>;
+
+# STORAGE_AWS_IAM_USER_ARN
+# STORAGE_AWS_EXTERNAL_ID - a secret password-like token used when setting up cross-account access
+
+
+# GCP
+
+describe integration <integration name>;
+
+# STORAGE_GCP_SERVICE_ACCOUNT
+
+# storage.objects.get
+# storage.objects.list
+# storage.objects.create

@@ -1,0 +1,9 @@
+# Set user to user secondary roles
+
+alter user <user> set SET DEFAULT_SECONDARY_ROLES = ('ALL');
+
+# Turn on secondary roles for session
+USE SECONDARY ROLES ALL;
+
+# Turn off secondary roles for session
+USE SECONDARY ROLES NONE;
