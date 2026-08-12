@@ -18,10 +18,10 @@ ORDER BY
 
 # Container Snowpark Container Services Costs
 
--- Show all long-running services in the current schema or account
+# Show all long-running services in the current schema or account
 SHOW SERVICES;
 
--- Show job services that have been executed
+# Show job services that have been executed
 SHOW JOB SERVICES;
 
 SHOW COMPUTE POOLS;
