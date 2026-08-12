@@ -1,0 +1,11 @@
+# Sample use Snowflake CLI to load data:
+
+snow stage create snowflake_cli_stage
+snow stage copy sample_orders.csv
+snow stage list-files snowflake_cli_stage
+snow stage copy load_from_cli_stage.sql @snowflake_cli_stage
+snow stage execute @snowflake_cli_stage/load_from_cli_stage.sql
+
+# Deploy and remove native app using Snowflake CLI:
+Snow app run
+Snow app teardown

@@ -1,0 +1,18 @@
+# Right-sizing
+
+# Queries slow and spilling to disk ->
+# not enough memory per query -> scale UP to a bigger size.
+
+# Queries waiting in a queue before starting ->
+# not enough slots for concurrent work -> scale OUT to more clusters.
+
+# A bigger warehouse gives each query more memory.
+# It does almost nothing for how many can run at once.
+# What you actually want is MAX_CLUSTER_COUNT above 1,
+# so Snowflake adds clusters under load and suspends them after
+# You pay for that capacity only while it's in use.
+
+# REMEMBER for ingestion:
+# Split files into smaller files 100-250 MB size.
+# Multiple threads are more efficient - smaller files can be processed in parallel.
+# Node = 8 threads. XS is 2 nodes

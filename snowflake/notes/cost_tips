@@ -1,0 +1,46 @@
+# Prevent query from running longer than set period
+
+alter user/warehouse/account/session set STATEMENT_TIMEOUT_IN_SECONDS = <number of seconds>;
+
+# CoCo costs
+
+SELECT
+    USER_ID,
+    SUM(TOKEN_CREDITS) AS TOTAL_CREDITS
+FROM
+    SNOWFLAKE.ACCOUNT_USAGE.CORTEX_CODE_CLI_USAGE_HISTORY
+WHERE
+    USAGE_TIME >= DATEADD('day', -30, CURRENT_TIMESTAMP())
+GROUP BY
+    USER_ID
+ORDER BY
+    TOTAL_CREDITS DESC;
+
+# Container Snowpark Container Services Costs
+
+-- Show all long-running services in the current schema or account
+SHOW SERVICES;
+
+-- Show job services that have been executed
+SHOW JOB SERVICES;
+
+SHOW COMPUTE POOLS;
+
+SELECT
+    compute_pool_name,
+    start_time,
+    end_time,
+    credits_used,
+    application_name -- Will populate if used by a Snowflake Native App
+FROM snowflake.account_usage.snowpark_container_services_history
+ORDER BY start_time DESC;
+
+SELECT
+    service_name,
+    service_schema,
+    service_owner, -- The role that created it
+    compute_pool_name,
+    created,
+    deleted
+FROM snowflake.account_usage.services
+ORDER BY created_on DESC;
