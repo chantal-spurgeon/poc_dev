@@ -1,0 +1,28 @@
+# Step 1: Tell Snowflake where to save the files
+CREATE OR REPLACE EXTERNAL VOLUME my_iceberg_volume
+   STORAGE_LOCATIONS = (
+      (NAME = 'my-s3-us-east-1'
+       STORAGE_PROVIDER = 'S3'
+       STORAGE_BASE_URL = 's3://my-iceberg-bucket/data/'
+       STORAGE_AWS_ROLE_ARN = 'arn:aws:iam::123456789012:role/my-snowflake-role')
+   );
+
+# Step 2: Build the Iceberg table pointing to your volume
+CREATE OR REPLACE ICEBERG TABLE customer_orders (
+    order_id INT,
+    product_name STRING,
+    purchase_date DATE,
+    amount NUMERIC
+)
+CATALOG = 'SNOWFLAKE'
+EXTERNAL_VOLUME = 'my_iceberg_volume'
+BASE_LOCATION = 'orders_folder/';
+
+# For Snowflake-managed Iceberg tables, Snowflake bills cross-cloud and cross-region data
+# transfer that Snowflake meters under the DATA_LAKE value of the TRANSFER_TYPE column in
+# the DATA_TRANSFER_HISTORY views. To learn more, see:
+
+# DATA_TRANSFER_HISTORY view in the ORGANIZATION_USAGE schema.
+# DATA_TRANSFER_HISTORY view in the ACCOUNT_USAGE schema.
+
+# https://docs.snowflake.com/en/sql-reference/sql/create-iceberg-table
