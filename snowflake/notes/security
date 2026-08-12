@@ -1,0 +1,24 @@
+USE ROLE ACCOUNTADMIN;
+ALTER ACCOUNT SET DISABLE_UI_DOWNLOAD_BUTTON = TRUE;
+
+# Main reason to disable is to force users to use COPY INTO which is logged.
+# Users with only RO access in the account cannot create stages, thus cannot download data
+
+USE ROLE ACCOUNTADMIN;
+ALTER ACCOUNT SET REQUIRE_STORAGE_INTEGRATION_FOR_STAGE_CREATION = TRUE;
+ALTER ACCOUNT SET REQUIRE_STORAGE_INTEGRATION_FOR_STAGE_OPERATION = TRUE;
+
+# Forces the use of integrations for external stages.
+# Users would then have to have USAGE on integration for stages to work.
+
+USE ROLE ACCOUNTADMIN;
+ALTER ACCOUNT SET PREVENT_UNLOAD_TO_INTERNAL_STAGES = TRUE;
+
+# Prevents data unload operations to any internal stage, including user stages,
+# table stages, or named internal stages.
+
+ALTER USER <user> PREVENT_UNLOAD_TO_INLINE_URL = TRUE;
+
+# Prevents ad hoc data unload operations to external cloud storage locations
+# (i.e. COPY INTO <location> statements that specify the cloud storage URL and
+# access settings directly in the statement).
