@@ -22,3 +22,6 @@ ALTER USER <user> PREVENT_UNLOAD_TO_INLINE_URL = TRUE;
 # Prevents ad hoc data unload operations to external cloud storage locations
 # (i.e. COPY INTO <location> statements that specify the cloud storage URL and
 # access settings directly in the statement).
+
+# Row access policy
+# https://docs.snowflake.com/en/user-guide/security-row-intro
