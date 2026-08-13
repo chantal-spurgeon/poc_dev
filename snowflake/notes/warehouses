@@ -16,3 +16,23 @@
 # Split files into smaller files 100-250 MB size.
 # Multiple threads are more efficient - smaller files can be processed in parallel.
 # Node = 8 threads. XS is 2 nodes
+
+# Queued Load (AVG_QUEUED_LOAD): Values greater than 0 mean queries are waiting for free compute resources because active queries have reached the concurrency limit.
+# High Running Load (AVG_RUNNING): Shows the average number of queries actively running during the time slice.
+# Queued Overload Time: Individual queries spend time waiting in the queue before execution
+# https://docs.snowflake.com/en/user-guide/warehouses-load-monitoring
+
+SELECT * 
+FROM TABLE(information_schema.warehouse_load_history(
+    DATE_RANGE_START => DATEADD('hour', -24, CURRENT_TIMESTAMP()),
+    WAREHOUSE_NAME => 'YOUR_WAREHOUSE_NAME'
+));
+
+SELECT start_time, query_text, queued_overload_time, execution_time 
+FROM snowflake.account_usage.query_history 
+WHERE start_time >= DATEADD('day', -7, CURRENT_DATE())
+  AND warehouse_name = 'YOUR_WAREHOUSE_NAME'
+  AND queued_overload_time > 0;
+
+# new feature adaptive warehouses
+# https://docs.snowflake.com/en/user-guide/warehouses-adaptive
