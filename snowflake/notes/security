@@ -25,3 +25,66 @@ ALTER USER <user> PREVENT_UNLOAD_TO_INLINE_URL = TRUE;
 
 # Row access policy
 # https://docs.snowflake.com/en/user-guide/security-row-intro
+
+# Identify policies
+SELECT *
+FROM TABLE(
+  mydb.INFORMATION_SCHEMA.POLICY_REFERENCES(
+ POLICY_NAME=>'mydb.policies.rap1'
+  )
+);
+
+# Examples
+
+-- table
+CREATE TABLE sales (
+  customer   varchar,
+  product    varchar,
+  spend      decimal(20, 2),
+  sale_date  date,
+  region     varchar
+)
+WITH ROW ACCESS POLICY sales_policy ON (region);
+
+-- view
+CREATE VIEW sales_v WITH ROW ACCESS POLICY sales_policy ON (region)
+AS SELECT * FROM sales;
+
+CREATE TABLE security.salesmanagerregions (
+  sales_manager varchar,
+  region        varchar
+);
+
+USE ROLE SECURITYADMIN;
+
+CREATE ROLE mapping_role;
+
+GRANT SELECT ON TABLE security.salesmanagerregions TO ROLE mapping_role;
+
+USE ROLE schema_owner_role;
+
+CREATE OR REPLACE ROW ACCESS POLICY security.sales_policy
+AS (sales_region varchar) RETURNS BOOLEAN ->
+  'sales_executive_role' = CURRENT_ROLE()
+ OR EXISTS (
+   SELECT 1 FROM salesmanagerregions
+     WHERE sales_manager = CURRENT_ROLE()
+     AND region = sales_region
+ )
+;
+
+GRANT OWNERSHIP ON ROW ACCESS POLICY security.sales_policy TO mapping_role;
+
+GRANT APPLY ON ROW ACCESS POLICY security.sales_policy TO ROLE sales_analyst_role;
+
+USE ROLE SECURITYADMIN;
+
+ALTER TABLE sales ADD ROW ACCESS POLICY security.sales_policy ON (region);
+
+GRANT SELECT ON TABLE sales TO ROLE sales_manager_role;
+
+USE ROLE sales_manager_role;
+SELECT product, SUM(spend)
+FROM sales
+WHERE YEAR(sale_date) = 2020
+GROUP BY product;
