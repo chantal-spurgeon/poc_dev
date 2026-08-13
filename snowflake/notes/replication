@@ -1,0 +1,82 @@
+# View the list of the accounts in your organization
+# Note the organization name and account name for each account for which you are enabling replication
+SHOW ACCOUNTS;
+
+# Enable replication by executing this statement for each source and target account in your organization
+SELECT SYSTEM$GLOBAL_ACCOUNT_SET_PARAMETER('<organization_name>.<account_name>', 'ENABLE_ACCOUNT_DATABASE_REPLICATION', 'true');
+
+SHOW REPLICATION ACCOUNTS;
+
+# ON ACCOUNT 1
+
+# To enable
+ALTER DATABASE mydb1 ENABLE REPLICATION TO ACCOUNTS myorg.account2, myorg.account3;
+
+# To disable 
+ALTER DATABASE mydb1 ENABLE REPLICATION TO ACCOUNTS myorg.account2, myorg.account3;
+
+# Enable failover
+ALTER DATABASE mydb1 ENABLE FAILOVER TO ACCOUNTS myorg.account2, myorg.account3;
+
+# ON ACCOUNT2
+
+SHOW REPLICATION DATABASES;
+
+#+------------------+-------------------------------+-----------------+----------+---------+------------+----------------------------+---------------------------------+------------------------------+-------------------+-----------------+
+#| snowflake_region | created_on                    | account_name    | name     | comment | is_primary | primary                    | replication_allowed_to_accounts | failover_allowed_to_accounts | organization_name | account_locator |
+#|------------------+-------------------------------+-----------------+----------+---------+------------+----------------------------+---------------------------------+------------------------------+-------------------+-----------------|
+#| AWS_US_WEST_2    | 2019-11-15 00:51:45.473 -0700 | ACCOUNT1        | MYDB1    | NULL    | true       | MYORG.ACCOUNT1.MYDB1       | MYORG.ACCOUNT2, MYORG,ACCOUNT1  | MYORG.ACCOUNT1               | MYORG             | MYACCOUNT1      |
+#+------------------+-------------------------------+-----------------+----------+---------+------------+----------------------------+---------------------------------+------------------------------+-------------------+-----------------+
+
+# Create a replica of the 'mydb1' primary database
+# If the primary database has the DATA_RETENTION_TIME_IN_DAYS parameter set to a value other than the default value,
+# set the same value for the parameter on the secondary database.
+CREATE DATABASE mydb1
+  AS REPLICA OF myorg.account1.mydb1
+  DATA_RETENTION_TIME_IN_DAYS = 10;
+
+# Optional
+# Increase statement timeout for initial refresh
+# Optional but recommended for initial refresh of a large database
+ALTER SESSION SET STATEMENT_TIMEOUT_IN_SECONDS = 604800;
+# If you have an active warehouse in current session, update warehouse statement timeout
+SELECT CURRENT_WAREHOUSE();
+ALTER WAREHOUSE my_wh SET STATEMENT_TIMEOUT_IN_SECONDS = 604800;
+# Reset warehouse statement timeout after initial refresh
+ALTER WAREHOUSE my_wh UNSET STATEMENT_TIMEOUT_IN_SECONDS;
+
+# Verify the secondary database
+SHOW REPLICATION DATABASES;
+
+#+------------------+-------------------------------+---------------+----------+---------+------------+-------------------------+---------------------------------+------------------------------+-------------------+-----------------+
+#| snowflake_region | created_on                    | account_name  | name     | comment | is_primary | primary                 | replication_allowed_to_accounts | failover_allowed_to_accounts | organization_name | account_locator |
+#|------------------+-------------------------------+---------------+----------+---------+------------+------------------------------------------+----------------+------------------------------+-------------------------------------|
+#| AWS_US_WEST_2    | 2019-11-15 00:51:45.473 -0700 | ACCOUNT1      | MYDB1    | NULL    | true       | MYORG.ACCOUNT1.MYDB1    | MYORG.ACCOUNT2, MYORG.ACCOUNT1  | MYORG.ACCOUNT1               | MYORG             | MYACCOUNT1      |
+#| AWS_US_EAST_1    | 2019-08-15 15:51:49.094 -0700 | ACCOUNT2      | MYDB1    | NULL    | false      | MYORG.ACCOUNT1.MYDB1    |                                 |                              | MYORG             | MYACCOUNT2      |
+#+------------------+-------------------------------+---------------+----------+---------+------------+-------------------------+---------------------------------+------------------------------+-------------------+-----------------+
+
+# Refresh
+ALTER DATABASE mydb1 REFRESH;
+
+# Create task
+CREATE TASK refresh_mydb1_task
+  WAREHOUSE = mywh
+  SCHEDULE = '10 minute'
+  USER_TASK_TIMEOUT_MS = 14400000
+AS
+  ALTER DATABASE mydb1 REFRESH;
+
+ALTER TASK refresh_mydb1_task RESUME;
+
+# Monitor
+select *
+  from table(information_schema.database_refresh_progress(mydb1));
+
+# Monitor costs
+SELECT TO_DATE(start_time) AS date,
+  database_name,
+  SUM(credits_used) AS credits_used
+FROM snowflake.account_usage.database_replication_usage_history
+WHERE start_time >= DATEADD(month,-1,CURRENT_TIMESTAMP())
+GROUP BY 1,2
+ORDER BY 3 DESC;
