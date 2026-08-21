@@ -4,14 +4,14 @@ import pandas as pd
 
 # 1. Page Configuration & Layout
 st.set_page_config(layout="wide", page_title="FinOps Cost Optimization Dashboard")
-st.title("📈 Cloud FinOps Optimization Dashboard")
+st.title("Cloud FinOps Optimization Dashboard")
 st.caption("Identifying compute inefficiencies, storage spilling, and compilation bottlenecks.")
 
 # 2. Establish Active Snowflake Session
 session = get_active_session()
 
 # 3. Sidebar Filters
-st.sidebar.header("🔍 Filter Options")
+st.sidebar.header("Filter Options")
 
 # Fetch unique warehouses dynamically for the dropdown
 wh_options_df = session.sql("SELECT DISTINCT WAREHOUSE_NAME FROM FINOPS_QUERY_INSIGHTS ORDER BY 1").to_pandas()
@@ -44,11 +44,11 @@ if not df.empty:
     
     col1, col2, col3 = st.columns(3)
     with col1:
-        st.metric(label="⚠️ Total Flagged Inefficiencies", value=total_anomalies)
+        st.metric(label="Total Flagged Inefficiencies", value=total_anomalies)
     with col2:
-        st.metric(label="💾 Memory Spilling Queries", value=spill_count, delta="Action Required", delta_color="inverse")
+        st.metric(label="Memory Spilling Queries", value=spill_count, delta="Action Required", delta_color="inverse")
     with col3:
-        st.metric(label="⚙️ Compilation Bottlenecks", value=compile_count)
+        st.metric(label="Compilation Bottlenecks", value=compile_count)
 
     st.markdown("---")
 
@@ -56,13 +56,13 @@ if not df.empty:
     left_col, right_col = st.columns(2)
 
     with left_col:
-        st.subheader("📊 Inefficiencies by Warehouse")
+        st.subheader("Inefficiencies by Warehouse")
         if "WAREHOUSE_NAME" in df.columns:
             wh_counts = df["WAREHOUSE_NAME"].value_counts()
             st.bar_chart(wh_counts)
 
     with right_col:
-        st.subheader("💡 Distribution of Insight Categories")
+        st.subheader("Distribution of Insight Categories")
         if "INSIGHT_CATEGORY" in df.columns:
             cat_counts = df["INSIGHT_CATEGORY"].value_counts()
             st.bar_chart(cat_counts)
@@ -70,7 +70,7 @@ if not df.empty:
     st.markdown("---")
 
     # 7. Actionable Query Optimization Blueprint Table
-    st.subheader("📋 Targeted Query Refactoring Queue")
+    st.subheader("Targeted Query Refactoring Queue")
     st.markdown("Share this list with development teams to optimize warehouse credit consumption.")
     
     # Format layout for easy scannability
@@ -94,4 +94,4 @@ if not df.empty:
     )
 
 else:
-    st.success("✅ Clean Check! No query inefficiencies or cost anomalies detected with the current filter settings.")
+    st.success("Clean Check! No query inefficiencies or cost anomalies detected with the current filter settings.")
