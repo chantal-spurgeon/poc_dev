@@ -4,7 +4,7 @@ from snowflake.snowpark.context import get_active_session
 
 # Set up page layout
 st.set_page_config(layout="wide")
-st.title("🚀 Cortex Code (Snowsight) Usage Monitor")
+st.title("Cortex Code (Snowsight) Usage Monitor")
 st.caption("Track credit consumption and activity metrics for CoCo inside Snowsight worksheets.")
 
 # Initialize Snowpark Session
