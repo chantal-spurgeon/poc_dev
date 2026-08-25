@@ -1,0 +1,20 @@
+## Core Sections Programmed inside the Script
+
+   1. RBAC Setup: Separates administrative, engineering, and analytical tasks among isolated roles (data_engineer_role, security_admin_role, general_analyst_role) to reflect realistic enterprise access isolation.
+   2. External GCP Integration: Creates a secure Snowflake STORAGE INTEGRATION for Google Cloud Storage using secure OAuth/IAM tokens instead of risky, static master API keys.
+   3. Variant Landing Ingestion: Declares a staging table centered around a flexible VARIANT column type to absorb schema drift from incoming US Census JSON batches without pipeline breakage.
+   4. Continuous Snowpipe Automation: Programs an event-driven PIPE leveraging AUTO_INGEST = TRUE to immediately parse inbound files via simulated GCP Pub/Sub storage notification queues.
+   5. CDC Streams & Tasks: Attaches an append-only STREAM to tracking delta inputs, triggering an automated, serverless TASK that flattens JSON arrays into typed tabular sets without holding continuous, idle compute warehouses alive.
+   6. Advanced PII Data Masking: Features explicit MASKING POLICY definitions that dynamically alter data visibility by transforming sensitive strings into partial formats (e.g., XXX-XX-7890) or complete redactions (CONFIDENTIAL) based on the caller's active role.
+   7. Row-Level Access Control (RLAC): Deploys a ROW ACCESS POLICY that prevents unauthorized data access across territorial dimensions, mimicking strict multi-state geographic restrictions.
+
+------------------------------
+## 💡 Pro-Tips for Presenting This Code to Employers
+
+* 
+* Highlight Cost-Reduction: Emphasize how combining an append-only STREAM with a TASK containing a WHEN SYSTEM$STREAM_HAS_DATA(...) clause ensures you only spend compute resources when fresh files are dropped into the storage bucket.
+* Demonstrate Dynamic Security: Run the verification scripts at the bottom of the SQL file during a live demo to show how switching from data_engineer_role to general_analyst_role automatically strips out or hides sensitive fields without needing separate filtered views.
+* 
+
+Let me know if you would like me to generate a matching Python script to create simulated Census data or a GCP Terraform script to set up the corresponding cloud buckets and Pub/Sub notifications!
+
