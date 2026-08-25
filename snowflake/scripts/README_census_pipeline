@@ -18,3 +18,9 @@
 
 Let me know if you would like me to generate a matching Python script to create simulated Census data or a GCP Terraform script to set up the corresponding cloud buckets and Pub/Sub notifications!
 
+Generate Data:
+
+python generate_census_data.py
+
+The script will instantly export a compressed file named census_batch_001.json.gz inside your working directory.
+You can upload this generated .gz archive directly into your GCP storage bucket to test your Snowflake Auto-Ingest Snowpipe!
