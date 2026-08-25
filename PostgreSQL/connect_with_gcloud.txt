@@ -1,0 +1,52 @@
+Update PostgreSQL DB via script (this example for datameter)
+
+Install Google Cloud CLI for Windows, if not already installed.
+
+In the Google Cloud Web Console:
+
+Go to project
+
+	prj-cgh-dc-dm-prd-amer
+
+Menu: SQL
+From Overview page, get Private IP address and copy.
+
+	10.94.130.17
+
+Menu: Compute Engine | VM Instances
+
+Copy name for basion host and note zone.
+
+	vm-gcp-cgh-dc-dm-prd-trust-bastion-usw1-1
+	us-west1-a
+
+
+Tunnel to bastion host (insert information from above) in your local Google Cloud SDK Shell client: 
+
+PROD 
+gcloud compute ssh --zone "us-west1-a" "vm-gcp-cgh-dc-dm-prd-trust-bastion-usw1-1" --tunnel-through-iap --project "prj-cgh-dc-dm-prd-amer"  --ssh-flag "-L 15432:10.94.130.17:5432 -4"
+
+NEW PROD
+
+gcloud compute ssh --zone "us-west1-a" "vm-gcp-cgh-dm-prd-amer-us-west1-bastion-1" --tunnel-through-iap --project "prj-cgh-dm-prd-amer" --ssh-flag "-L 15432:10.15.112.3:5432 -4"
+
+QA
+
+gcloud compute ssh --zone "us-west1-a" "vm-gcp-cgh-dm-qa-us-west1-bastion-1" --tunnel-through-iap --project "prj-cgh-dm-qa-amer" --ssh-flag "-L 15432:10.15.96.3:5432 -4"
+
+INT
+gcloud compute ssh --zone "us-west1-a" "vm-gcp-cgh-dc-dm-npd-trust-bastion-usw1-1" --tunnel-through-iap --project "prj-cgh-dc-dm-npd-amer"  --ssh-flag "-L 15432:10.94.2.34:5432 -4"
+ 
+Connect to PostgreSQL (login credentials in lastpass based on the DB provided in ticket)
+
+Open DBeaver
+
+Create new PostgreSQL connection connecting to localhost, and appropriate DB and user.
+
+
+db_catalog (ontario)
+gcloud compute ssh --zone "us-west1-a" "vm-gcp-cgh-dc-ingestion-prd-usw1-trust-iap-bastion-1" --tunnel-through-iap --project "prj-cgh-dc-ingestion-prd-amer"  --ssh-flag "-L 15432:10.94.130.3:5432 -4"
+
+
+General Bastion connection:
+gcloud compute ssh --zone "us-west1-a" "vm-gcp-cgh-dc-ingestion-prd-usw1-trust-iap-bastion-1" --tunnel-through-iap --project "prj-cgh-dc-ingestion-prd-amer" --ssh-flag="-A"
