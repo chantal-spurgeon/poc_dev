@@ -1,0 +1,19 @@
+⚙️ How to Deploy This Utility
+
+1. Set Local Environment TokensInject your infrastructure credentials 
+dynamically into the session runtime to keep passwords out of your codebase:
+bash
+export SF_USER="your_snowflake_username"
+export SF_PASSWORD="your_secure_password"
+export SF_ACCOUNT="your_account_id.region"
+export SF_WAREHOUSE="your_management_warehouse"
+export SLACK_WEBHOOK_URL="https://slack.com"
+
+2. Test ExecutionRun the script manually to confirm data extraction formatting and verification workflows work as intended:
+bash
+python3 finops_audit_alerter.py
+
+3. Schedule Production Monitoring (Cron)To run this audit automatically every morning at 07:00 AM, append the execution route 
+to your machine's system task scheduler:
+text
+0 7 * * * /usr/bin/python3 /absolute/path/to/finops_audit_alerter.py >> /var/log/finops_audit.log 2>&1
