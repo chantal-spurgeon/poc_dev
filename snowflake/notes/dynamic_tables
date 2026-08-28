@@ -1,0 +1,23 @@
+Snowflake dynamic tables are declarative, self-maintaining tables that automatically materialize the results of a SQL query and keep them up to date based on a target freshness lag. [1, 2]  
+Key Concepts 
+
+• Declarative Setup: You define the target state using a  query, and Snowflake manages the orchestration and incremental updates without requiring manual tasks or streams. 
+• Target Lag: The  parameter sets the maximum allowable delay between a change in the source data and its reflection in the dynamic table (e.g.,  or ). 
+• Refresh Modes: Snowflake can perform an  refresh (processing only changed rows) or a  refresh, or use  to let the system choose the most efficient option. 
+• Dependency Management: Snowflake automatically builds a Directed Acyclic Graph (DAG) to handle multi-level pipelines and refresh child tables in the correct sequence. [6]  
+
+Example Usage 
+
+  CREATE OR REPLACE DYNAMIC TABLE dt_orders 
+  TARGET_LAG = '10 minutes' 
+  WAREHOUSE = transform_wh 
+  REFRESH_MODE = INCREMENTAL 
+AS 
+  SELECT order_id, customer_id, order_date, 
+         TRIM(UPPER(product_name)) AS product_name, 
+         quantity, unit_price, quantity * unit_price AS line_total 
+  FROM raw_orders 
+  WHERE order_status != 'returned';
+
+  
+Read more about configuration and guidelines in the official Snowflake Dynamic Tables Documentation. 
