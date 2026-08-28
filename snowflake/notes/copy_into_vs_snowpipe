@@ -72,22 +72,5 @@ Once data lands in your landing_raw_table, you need to transform it. You have tw
 * 
 
 (Note: For row-by-row, ultra-low latency requirements from streaming platforms like Apache Kafka without writing to intermediate files, evaluate [Snowpipe Streaming](https://docs.snowflake.com/en/user-guide/data-load-snowpipe-streaming-overview), which bypasses file creation entirely to load data streams directly into table rows.) [3, 10] 
-To help tailor this pipeline architecture, could you tell me:
-
-* 
-* Which cloud provider (AWS, Azure, or GCP) are you hosting your data on?
-* What format is the incoming data in (e.g., JSON, CSV, Parquet)?
-* Do you need to run complex transformations immediately as the data arrives?
-* 
 
 
-[1] [https://www.youtube.com](https://www.youtube.com/watch?v=J91yGQhjOvQ)
-[2] [https://www.linkedin.com](https://www.linkedin.com/pulse/copy-vs-snowpipe-arabinda-mohapatra-ac1xf)
-[3] [https://www.reddit.com](https://www.reddit.com/r/snowflake/comments/1gffsda/question_on_data_pipeline/)
-[4] [https://stellans.io](https://stellans.io/snowflake-data-loading-best-practices-a-guide-to-copy-stages-and-snowpipe/)
-[5] [https://queryplane.com](https://queryplane.com/blog/snowflake-stages-copy-into-and-snowpipe-in-practice/)
-[6] [https://medium.com](https://medium.com/snowflake/2025-confused-between-copy-snowpipe-dynamic-tables-7c69475e0914)
-[7] [https://www.snowflake.com](https://www.snowflake.com/en/blog/best-practices-for-data-ingestion/)
-[8] [https://www.youtube.com](https://www.youtube.com/watch?v=gvKG3Yc7Jmk&t=107)
-[9] [https://www.youtube.com](https://www.youtube.com/watch?v=ECnAhtDJsHs&t=280)
-[10] [https://www.snowflake.com](https://www.snowflake.com/en/blog/data-ingestion-best-practices-part-three/)
