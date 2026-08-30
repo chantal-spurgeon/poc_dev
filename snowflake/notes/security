@@ -88,3 +88,17 @@ SELECT product, SUM(spend)
 FROM sales
 WHERE YEAR(sale_date) = 2020
 GROUP BY product;
+
+-- 1. Create the row access policy
+CREATE OR REPLACE ROW ACCESS POLICY region_access_policy
+    AS (policy_region_id INT) RETURNS BOOLEAN ->
+       (CURRENT_ROLE() = 'DATA_ANALYST_EMEA_ROLE' AND policy_region_id = 1)
+    OR (CURRENT_ROLE() = 'DATA_ANALYST_APAC_ROLE' AND policy_region_id = 2)
+    OR (CURRENT_ROLE() = 'DATA_ANALYST_NA_ROLE'   AND policy_region_id = 3)
+    OR (CURRENT_ROLE() = 'DATA_ANALYST_LATAM_ROLE' AND policy_region_id = 4)
+    OR (CURRENT_ROLE() IN ('ACCOUNTADMIN', 'SECURITYADMIN')) -- Allow admins full visibility
+;
+
+-- 2. Apply the policy to your specific table
+ALTER TABLE your_table_name 
+    ADD ROW ACCESS POLICY region_access_policy ON (region_id);
