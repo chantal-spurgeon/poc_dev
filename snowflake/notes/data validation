@@ -1,0 +1,33 @@
+-- Use check constraints
+
+CREATE TABLE customers (
+    customer_id NUMBER,
+    customer_name STRING,
+    status STRING,
+    
+    CONSTRAINT valid_status
+        CHECK (status IN ('ACTIVE', 'INACTIVE', 'PENDING'))
+);
+
+-- Now, if someone tries to insert an invalid value:
+
+INSERT INTO customers
+VALUES (101, 'John', 'UNKNOWN');
+-- The insert fails because the value violates the CHECK constraint.
+
+Why is this useful?
+✅ Enforce data quality at the database layer
+✅ Prevent invalid values from entering your tables
+✅ Reduce reliance on application-side validation
+✅ Make business rules visible as part of the table definition
+✅ Apply the same rule consistently across different data pipelines
+
+-- You can also define constraints directly on a column:
+CREATE TABLE orders (
+    order_id NUMBER,
+    order_amount NUMBER CHECK (order_amount >= 0),
+    order_date DATE CHECK (order_date <= CURRENT_DATE())
+);
+
+Tip: Think of CHECK constraints as a safety net at the table level. Your ETL pipeline can still validate data, 
+but the database becomes the final line of defence against invalid values.
