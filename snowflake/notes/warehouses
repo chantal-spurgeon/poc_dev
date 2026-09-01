@@ -2,6 +2,7 @@
 
 # Queries slow and spilling to disk ->
 # not enough memory per query -> scale UP to a bigger size.
+# The larger the warehouse, the more threads when ingesting files. eg xs is 2 nodes, so 8 threads...a sm is 4 nodes so 16 threads.
 
 # Queries waiting in a queue before starting ->
 # not enough slots for concurrent work -> scale OUT to more clusters.
