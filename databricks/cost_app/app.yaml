@@ -1,0 +1,16 @@
+# Databricks Apps deployment config.
+# DATABRICKS_HOST and OAuth credentials are injected automatically by the
+# platform — you don't set those here. You DO need to point the app at a
+# SQL Warehouse to run queries against (system tables are queried via SQL,
+# same as any other table).
+
+command:
+  - "streamlit"
+  - "run"
+  - "app.py"
+  - "--server.port=8000"
+  - "--server.address=0.0.0.0"
+
+env:
+  - name: DATABRICKS_WAREHOUSE_HTTP_PATH
+    value: "/sql/1.0/warehouses/REPLACE_WITH_YOUR_WAREHOUSE_ID"
