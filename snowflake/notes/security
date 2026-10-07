@@ -102,3 +102,11 @@ CREATE OR REPLACE ROW ACCESS POLICY region_access_policy
 -- 2. Apply the policy to your specific table
 ALTER TABLE your_table_name 
     ADD ROW ACCESS POLICY region_access_policy ON (region_id);
+
+-- Enable Cortex AI Guardrails
+-- The CORTEX_AI_GUARDRAILS_USAGE_HISTORY view in the ACCOUNT_USAGE schema provides a historical record of all guardrail scan activity for your account.
+ALTER ACCOUNT SET AI_SETTINGS = $$
+  guardrails:
+    advanced_prompt_injection:
+      - enabled: true
+$$;
