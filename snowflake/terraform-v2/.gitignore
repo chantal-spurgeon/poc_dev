@@ -1,0 +1,31 @@
+# State holds user names, grants and integration details. It never belongs in git.
+*.tfstate
+*.tfstate.*
+crash.log
+crash.*.log
+
+# Provider downloads and saved plans
+.terraform/
+*.tfplan
+tfplan
+
+# Local overrides and secrets
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+.env
+.env.*
+*.p8
+*.pem
+*.key
+*.pub
+secrets.*
+
+# Editors and OS
+.DS_Store
+.idea/
+.vscode/
+
+# Keep the dependency lock file: it pins provider checksums.
+# (.terraform.lock.hcl is intentionally NOT ignored.)
