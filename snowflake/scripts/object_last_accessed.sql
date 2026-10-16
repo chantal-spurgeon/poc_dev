@@ -1,6 +1,3 @@
-use database DATABASE;
-use schema SCHEMA;
-
 WITH targets AS (
     SELECT column1 AS object_name
     FROM VALUES
