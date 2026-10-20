@@ -20,7 +20,7 @@ inputs = {
 
     "GCS_DATA_LAKE8" = {
       provider                  = "GCS"
-      storage_allowed_locations = ["gcs://your-jype-gcp-bucket/raw/"]
+      storage_allowed_locations = ["gs://your-jype-gcp-bucket/raw/"]
       type                      = "EXTERNAL_STAGE"
       comment                   = "Google Cloud Storage Integration Staging"
 
