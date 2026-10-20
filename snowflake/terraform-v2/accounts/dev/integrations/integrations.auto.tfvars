@@ -22,6 +22,6 @@ storage_integrations = {
   GCS_DATA_LAKE = {
     provider                  = "GCS"
     comment                   = "Google Cloud Storage Integration Staging"
-    storage_allowed_locations = ["gcs://your-jype-gcp-bucket/raw/"]
+    storage_allowed_locations = ["gs://your-jype-gcp-bucket/raw/"]
   }
 }
