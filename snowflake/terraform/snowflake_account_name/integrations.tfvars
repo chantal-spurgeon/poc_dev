@@ -10,8 +10,6 @@ storage_integrations = {
   "GCS_DATA_LAKE" = {
     provider                  = "GCS"
     storage_allowed_locations = ["gcs://your-jype-gcp-bucket/raw/"]
-
-    # FIX: Explicitly supply the missing keys to satisfy the module type check
     type                      = "EXTERNAL_STAGE"
     comment                   = "Google Cloud Storage Integration Staging"
   }
