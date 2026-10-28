@@ -1,3 +1,12 @@
+CREATE TABLE IF NOT EXISTS MONITOR_DB.OPS.pool_suspend_log (
+  checked_at TIMESTAMP_LTZ,
+  pool_name  STRING,
+  samples    NUMBER,
+  busy       NUMBER,
+  jobs       NUMBER,
+  action     STRING
+);
+
 CREATE OR REPLACE TASK MONITOR_DB.OPS.suspend_pool_if_idle
   USER_TASK_MANAGED_INITIAL_WAREHOUSE_SIZE = 'XSMALL'
   SCHEDULE = 'USING CRON 0,30 20-23 * * * America/New_York'   -- tries every 30 min, 8-11:30 pm ET
@@ -23,10 +32,14 @@ BEGIN
 
   IF (samples > 0 AND busy = 0 AND jobs = 0) THEN
     ALTER COMPUTE POOL <POOL_NAME> SUSPEND;
-    RETURN 'suspended';
+    INSERT INTO MONITOR_DB.OPS.pool_suspend_log
+      SELECT CURRENT_TIMESTAMP(), '<POOL_NAME>', :samples, :busy, :jobs, 'suspended';
+  ELSE
+    INSERT INTO MONITOR_DB.OPS.pool_suspend_log
+      SELECT CURRENT_TIMESTAMP(), '<POOL_NAME>', :samples, :busy, :jobs, 'skipped';
   END IF;
-
-  RETURN 'skipped: samples=' || samples || ' busy=' || busy || ' jobs=' || jobs;
 END;
+
+EXECUTE TASK MONITOR_DB.OPS.suspend_pool_if_idle;
 
 ALTER TASK MONITOR_DB.OPS.suspend_pool_if_idle RESUME;
