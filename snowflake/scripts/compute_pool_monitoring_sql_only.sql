@@ -114,15 +114,18 @@ CREATE TABLE IF NOT EXISTS service_events_hourly (
   events     NUMBER
 );
 
-CREATE OR REPLACE TASK rollup_pool_telemetry
+CREATE OR REPLACE TASK MONITOR_DB.OPS.rollup_pool_telemetry
   USER_TASK_MANAGED_INITIAL_WAREHOUSE_SIZE = 'XSMALL'
-  SCHEDULE = 'USING CRON 5 * * * * America/Chicago'     -- 5 past each hour
+  SCHEDULE = 'USING CRON 5 * * * * America/Chicago'
 AS
 DECLARE
-  h_end   TIMESTAMP_LTZ DEFAULT DATE_TRUNC('hour', CURRENT_TIMESTAMP());
-  h_start TIMESTAMP_LTZ DEFAULT DATEADD('hour', -1, DATE_TRUNC('hour', CURRENT_TIMESTAMP()));
+  -- the hour as a real instant (for the stored labels)
+  h_start     TIMESTAMP_LTZ DEFAULT DATEADD('hour', -1, DATE_TRUNC('hour', CURRENT_TIMESTAMP()));
+  h_end       TIMESTAMP_LTZ DEFAULT DATE_TRUNC('hour', CURRENT_TIMESTAMP());
+  -- the same hour as UTC wall-clock time (for comparing to the event table)
+  h_start_utc TIMESTAMP_NTZ DEFAULT CONVERT_TIMEZONE('UTC', DATEADD('hour', -1, DATE_TRUNC('hour', CURRENT_TIMESTAMP())))::TIMESTAMP_NTZ;
+  h_end_utc   TIMESTAMP_NTZ DEFAULT CONVERT_TIMEZONE('UTC', DATE_TRUNC('hour', CURRENT_TIMESTAMP()))::TIMESTAMP_NTZ;
 BEGIN
-  -- CPU / memory utilization
   DELETE FROM MONITOR_DB.OPS.util_hourly WHERE hour = :h_start;
   INSERT INTO MONITOR_DB.OPS.util_hourly
   SELECT :h_start,
@@ -132,28 +135,25 @@ BEGIN
          APPROX_PERCENTILE(VALUE::float, 0.50),
          APPROX_PERCENTILE(VALUE::float, 0.95),
          MAX(VALUE::float)
-  FROM SNOWFLAKE.TELEMETRY.EVENTS
+  FROM SNOWFLAKE.TELEMETRY.EVENTS_VIEW
   WHERE RECORD_TYPE = 'METRIC'
-    AND TIMESTAMP >= :h_start AND TIMESTAMP < :h_end
+    AND TIMESTAMP >= :h_start_utc AND TIMESTAMP < :h_end_utc
     AND RECORD:metric:name::string IN
-        ('container.cpu.usage','container.cpu.requested','container.cpu.limit',
-         'container.memory.usage')
+        ('container.cpu.usage','container.cpu.requested','container.cpu.limit','container.memory.usage')
   GROUP BY 2, 3, 4;
 
-  -- Error-ish container log lines (regex only over one hour of logs)
   DELETE FROM MONITOR_DB.OPS.errors_hourly WHERE hour = :h_start;
   INSERT INTO MONITOR_DB.OPS.errors_hourly
   SELECT :h_start,
          RESOURCE_ATTRIBUTES:"snow.compute_pool.name"::string,
          RESOURCE_ATTRIBUTES:"snow.service.name"::string,
          COUNT(*)
-  FROM SNOWFLAKE.TELEMETRY.EVENTS
+  FROM SNOWFLAKE.TELEMETRY.EVENTS_VIEW
   WHERE RECORD_TYPE = 'LOG'
-    AND TIMESTAMP >= :h_start AND TIMESTAMP < :h_end
+    AND TIMESTAMP >= :h_start_utc AND TIMESTAMP < :h_end_utc
     AND REGEXP_LIKE(VALUE::string, '.*(Traceback|ERROR|Exception|MemoryError|OOM|timed? ?out).*', 'is')
   GROUP BY 2, 3;
 
-  -- Service lifecycle events (restarts, scale up/down, etc.)
   DELETE FROM MONITOR_DB.OPS.service_events_hourly WHERE hour = :h_start;
   INSERT INTO MONITOR_DB.OPS.service_events_hourly
   SELECT :h_start,
@@ -161,16 +161,15 @@ BEGIN
          RESOURCE_ATTRIBUTES:"snow.service.name"::string,
          RECORD:name::string,
          COUNT(*)
-  FROM SNOWFLAKE.TELEMETRY.EVENTS
+  FROM SNOWFLAKE.TELEMETRY.EVENTS_VIEW
   WHERE RECORD_TYPE = 'EVENT'
-    AND TIMESTAMP >= :h_start AND TIMESTAMP < :h_end
+    AND TIMESTAMP >= :h_start_utc AND TIMESTAMP < :h_end_utc
   GROUP BY 2, 3, 4;
 
-  -- Retention: keep 90 days in each small table
-  DELETE FROM MONITOR_DB.OPS.pool_state_log      WHERE captured_at < DATEADD('day', -90, CURRENT_TIMESTAMP());
-  DELETE FROM MONITOR_DB.OPS.util_hourly         WHERE hour        < DATEADD('day', -90, CURRENT_TIMESTAMP());
-  DELETE FROM MONITOR_DB.OPS.errors_hourly       WHERE hour        < DATEADD('day', -90, CURRENT_TIMESTAMP());
-  DELETE FROM MONITOR_DB.OPS.service_events_hourly WHERE hour      < DATEADD('day', -90, CURRENT_TIMESTAMP());
+  DELETE FROM MONITOR_DB.OPS.pool_state_log        WHERE captured_at < DATEADD('day', -90, CURRENT_TIMESTAMP());
+  DELETE FROM MONITOR_DB.OPS.util_hourly           WHERE hour        < DATEADD('day', -90, CURRENT_TIMESTAMP());
+  DELETE FROM MONITOR_DB.OPS.errors_hourly         WHERE hour        < DATEADD('day', -90, CURRENT_TIMESTAMP());
+  DELETE FROM MONITOR_DB.OPS.service_events_hourly WHERE hour        < DATEADD('day', -90, CURRENT_TIMESTAMP());
 END;
 
 -- Start both tasks (owning role needs EXECUTE MANAGED TASK on the account,
