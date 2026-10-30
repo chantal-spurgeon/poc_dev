@@ -1,0 +1,15 @@
+# Terragrunt / Terraform working folders (the cache holds local state until a remote backend is enabled)
+.terragrunt-cache/
+.terraform/
+
+# State: never commit
+*.tfstate
+*.tfstate.*
+
+# Keys and secrets
+*.p8
+*.pem
+*.pub
+.env
+
+.DS_Store

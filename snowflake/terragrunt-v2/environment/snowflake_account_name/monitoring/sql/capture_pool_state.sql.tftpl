@@ -1,0 +1,10 @@
+BEGIN
+  SHOW COMPUTE POOLS;
+  INSERT INTO ${monitor_schema}.POOL_STATE_LOG
+  SELECT CURRENT_TIMESTAMP(), "name", "state", "min_nodes", "max_nodes",
+         "active_nodes", "idle_nodes", "target_nodes", "auto_suspend_secs",
+         "instance_family", "num_services", "num_jobs"
+  FROM TABLE(RESULT_SCAN(LAST_QUERY_ID()));
+  DELETE FROM ${monitor_schema}.POOL_STATE_LOG
+   WHERE captured_at < DATEADD('day', -90, CURRENT_TIMESTAMP());
+END;

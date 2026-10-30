@@ -1,0 +1,68 @@
+-- Procedure body for REFRESH_EGRESS_BY_ROLE_MONTHLY (rendered by templatefile()).
+-- Recomputes the current and prior month in full each run, so it is idempotent and
+-- catches late rows across the month boundary (QUERY_HISTORY latency is ~45 minutes).
+-- Source: SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY. Scope: Snowflake-billed egress from
+-- unloads (COPY INTO @stage etc.). Rates are your original ones: confirm them against
+-- your rate card.
+BEGIN
+    MERGE INTO ${monitor_schema}.EGRESS_BY_ROLE_MONTHLY t
+    USING (
+        WITH q AS (
+            SELECT DATE_TRUNC('month', start_time)::DATE                  AS month,
+                   COALESCE(role_name, '<none>')                          AS role_name,
+                   UPPER(outbound_data_transfer_cloud)                    AS target_cloud,
+                   LOWER(COALESCE(outbound_data_transfer_region, ''))     AS target_region,
+                   UPPER(outbound_data_transfer_cloud) || '_' ||
+                     REPLACE(UPPER(COALESCE(outbound_data_transfer_region, '')), '-', '_')
+                                                                          AS target_region_id,
+                   outbound_data_transfer_bytes                           AS bytes_out
+            FROM snowflake.account_usage.query_history
+            WHERE start_time >= DATEADD('month', -1, DATE_TRUNC('month', CURRENT_DATE()))
+              AND outbound_data_transfer_bytes > 0
+              AND outbound_data_transfer_cloud IS NOT NULL
+        ),
+        agg AS (
+            SELECT month, role_name, target_cloud, target_region, target_region_id,
+                   COUNT(*)                       AS unload_queries,
+                   SUM(bytes_out) / POWER(1024, 3) AS gb_raw
+            FROM q
+            GROUP BY 1, 2, 3, 4, 5
+        ),
+        rated AS (
+            SELECT agg.*,
+                   CASE
+                       -- same region as this account: no charge
+                       -- (SPLIT_PART strips an org region-group prefix, e.g. PUBLIC.)
+                       WHEN target_region_id = SPLIT_PART(CURRENT_REGION(), '.', -1) THEN 0
+                       WHEN target_cloud = 'AWS' AND target_region = 'us-east-1'     THEN 0.02
+                       ELSE 0.09
+                   END AS rate_per_gb
+            FROM agg
+        )
+        SELECT month, role_name, target_cloud, target_region, target_region_id,
+               unload_queries,
+               ROUND(gb_raw, 2)               AS gb_out,
+               rate_per_gb,
+               ROUND(gb_raw * rate_per_gb, 2) AS est_cost_usd
+        FROM rated
+    ) s
+    ON  t.month         = s.month
+    AND t.role_name     = s.role_name
+    AND t.target_cloud  = s.target_cloud
+    AND t.target_region = s.target_region
+    WHEN MATCHED THEN UPDATE SET
+        t.target_region_id = s.target_region_id,
+        t.unload_queries   = s.unload_queries,
+        t.gb_out           = s.gb_out,
+        t.rate_per_gb      = s.rate_per_gb,
+        t.est_cost_usd     = s.est_cost_usd,
+        t.refreshed_at     = CURRENT_TIMESTAMP()
+    WHEN NOT MATCHED THEN INSERT
+        (month, role_name, target_cloud, target_region, target_region_id,
+         unload_queries, gb_out, rate_per_gb, est_cost_usd, refreshed_at)
+    VALUES
+        (s.month, s.role_name, s.target_cloud, s.target_region, s.target_region_id,
+         s.unload_queries, s.gb_out, s.rate_per_gb, s.est_cost_usd, CURRENT_TIMESTAMP());
+
+    RETURN 'EGRESS_BY_ROLE_MONTHLY refreshed: ' || SQLROWCOUNT || ' rows merged';
+END;

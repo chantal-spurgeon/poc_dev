@@ -1,0 +1,11 @@
+SELECT month,
+       role_name,
+       target_cloud,
+       target_region,
+       unload_queries,
+       gb_out,
+       TO_VARCHAR(est_cost_usd, '$999,999,990.00') AS est_cost,
+       refreshed_at
+FROM ${monitor_schema}.EGRESS_BY_ROLE_MONTHLY
+WHERE gb_out > 0
+ORDER BY month DESC, est_cost_usd DESC
