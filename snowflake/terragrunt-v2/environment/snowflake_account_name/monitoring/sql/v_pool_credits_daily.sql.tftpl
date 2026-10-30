@@ -1,0 +1,5 @@
+SELECT DATE_TRUNC('day', start_time) AS day,
+       compute_pool_name AS pool_name,
+       SUM(credits_used) AS credits
+FROM SNOWFLAKE.ACCOUNT_USAGE.SNOWPARK_CONTAINER_SERVICES_HISTORY
+GROUP BY 1, 2

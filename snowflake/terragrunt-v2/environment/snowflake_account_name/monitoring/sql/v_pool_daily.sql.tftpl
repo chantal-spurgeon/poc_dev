@@ -1,0 +1,15 @@
+WITH s AS (
+  SELECT *, LAG(state) OVER (PARTITION BY pool_name ORDER BY captured_at) AS prev_state
+  FROM ${monitor_schema}.POOL_STATE_LOG
+)
+SELECT
+  DATE_TRUNC('day', captured_at) AS day,
+  pool_name,
+  COUNT_IF(state = 'SUSPENDED' AND prev_state IS DISTINCT FROM 'SUSPENDED') AS suspends,
+  COUNT_IF(state = 'STARTING'  AND prev_state IS DISTINCT FROM 'STARTING')  AS resumes,
+  ROUND(100 * COUNT_IF(active_nodes + idle_nodes >= max_nodes AND state <> 'SUSPENDED')
+        / NULLIFZERO(COUNT_IF(state <> 'SUSPENDED')), 1) AS pct_time_at_max_nodes,
+  ROUND(100 * COUNT_IF(state = 'IDLE') / NULLIFZERO(COUNT(*)), 1) AS pct_snapshots_idle,
+  MAX(active_nodes) AS peak_active_nodes
+FROM s
+GROUP BY 1, 2
