@@ -187,6 +187,8 @@ variable "tables" {
       type     = string
       nullable = optional(bool, true)
       comment  = optional(string)
+      # SQL expression used as the column default, e.g. "CURRENT_TIMESTAMP()"
+      default_expression = optional(string)
     }))
   }))
   description = "Tables, keyed DATABASE.SCHEMA.TABLE. Never dropped by Terraform (prevent_destroy)."
@@ -202,7 +204,10 @@ variable "views" {
   type = map(object({
     comment   = optional(string)
     is_secure = optional(bool, false)
-    statement = string # the SELECT only, with every table written DATABASE.SCHEMA.TABLE
+    statement = string # the SELECT only, with every table and view written DATABASE.SCHEMA.NAME
+    # Set true when the statement reads another view defined in this same map.
+    # Those views are created after all the others (one level of nesting).
+    after_other_views = optional(bool, false)
   }))
   description = "Views, keyed DATABASE.SCHEMA.VIEW."
   default     = {}

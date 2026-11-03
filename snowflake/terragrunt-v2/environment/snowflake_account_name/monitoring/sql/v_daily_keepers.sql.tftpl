@@ -1,0 +1,8 @@
+SELECT day, compute_pool,
+       COUNT_IF(approx_hours_running >= 20)                         AS services_running_20h_plus,
+       COUNT_IF(approx_hours_running > 0 AND auto_suspend_secs = 0) AS running_services_without_autosuspend,
+       LISTAGG(IFF(approx_hours_running >= 20, service_name, NULL), ', ')
+         WITHIN GROUP (ORDER BY service_name)                       AS always_on_services
+FROM ${monitor_schema}.V_SERVICE_RUNNING_HOURS_DAILY
+GROUP BY 1, 2
+ORDER BY day DESC

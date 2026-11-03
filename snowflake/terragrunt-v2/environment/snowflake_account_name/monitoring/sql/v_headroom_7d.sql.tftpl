@@ -1,0 +1,7 @@
+SELECT pool_name, service, metric,
+       MAX(p95)     AS peak_p95,
+       AVG(p50)     AS avg_p50,
+       MAX(max_val) AS absolute_max
+FROM ${monitor_schema}.UTIL_HOURLY
+WHERE hour >= DATEADD('day', -7, CURRENT_TIMESTAMP())
+GROUP BY 1, 2, 3

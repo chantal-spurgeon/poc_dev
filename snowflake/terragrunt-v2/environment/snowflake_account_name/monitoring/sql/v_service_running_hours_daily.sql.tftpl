@@ -1,0 +1,8 @@
+SELECT
+  DATE_TRUNC('day', captured_at)                         AS day,
+  compute_pool,
+  service_name,
+  ROUND(COUNT_IF(status = 'RUNNING') * ${snapshot_minutes} / 60.0, 1)     AS approx_hours_running,
+  MAX(COALESCE(auto_suspend_secs, 0))                    AS auto_suspend_secs
+FROM ${monitor_schema}.SERVICE_STATE_LOG
+GROUP BY 1, 2, 3

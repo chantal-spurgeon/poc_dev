@@ -1,0 +1,26 @@
+DECLARE
+  samples NUMBER;
+  busy    NUMBER;
+  jobs    NUMBER;
+BEGIN
+  SELECT COUNT(*), COUNT_IF(VALUE::float >= 0.05)
+    INTO :samples, :busy
+  FROM ${event_view}
+  WHERE RECORD_TYPE = 'METRIC'
+    AND RECORD:metric:name::string = 'container.cpu.usage'
+    AND UPPER(RESOURCE_ATTRIBUTES:"snow.compute_pool.name"::string) = UPPER('${pool_name}')
+    AND TIMESTAMP >= DATEADD('minute', -30, SYSDATE());      -- SYSDATE() is UTC, matching the column
+
+  SHOW SERVICES IN COMPUTE POOL ${pool_name};
+  SELECT COUNT_IF("is_job" = TRUE AND "status" = 'RUNNING') INTO :jobs
+  FROM TABLE(RESULT_SCAN(LAST_QUERY_ID()));
+
+  IF (samples > 0 AND busy = 0 AND jobs = 0) THEN
+    ALTER COMPUTE POOL ${pool_name} SUSPEND;
+    INSERT INTO ${monitor_schema}.POOL_SUSPEND_LOG
+      SELECT CURRENT_TIMESTAMP(), '${pool_name}', :samples, :busy, :jobs, 'suspended';
+  ELSE
+    INSERT INTO ${monitor_schema}.POOL_SUSPEND_LOG
+      SELECT CURRENT_TIMESTAMP(), '${pool_name}', :samples, :busy, :jobs, 'skipped';
+  END IF;
+END;

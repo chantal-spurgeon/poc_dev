@@ -1,0 +1,25 @@
+SELECT
+  c.day,
+  c.pool_name,
+  c.credits,
+  p.suspends,
+  p.resumes,
+  p.pct_time_at_max_nodes,
+  p.peak_active_nodes,
+  COALESCE(e.error_lines, 0)     AS error_lines,
+  COALESCE(ev.restart_like, 0)   AS restart_like_events
+FROM ${monitor_schema}.V_POOL_CREDITS_DAILY c
+LEFT JOIN ${monitor_schema}.V_POOL_DAILY p
+  ON p.day = c.day AND p.pool_name = c.pool_name
+LEFT JOIN (
+  SELECT DATE_TRUNC('day', hour) AS day, pool_name, SUM(error_lines) AS error_lines
+  FROM ${monitor_schema}.ERRORS_HOURLY GROUP BY 1, 2
+) e ON e.day = c.day AND e.pool_name = c.pool_name
+LEFT JOIN (
+  -- Event names vary; adjust the filter after running the discovery query.
+  SELECT DATE_TRUNC('day', hour) AS day, pool_name, SUM(events) AS restart_like
+  FROM ${monitor_schema}.SERVICE_EVENTS_HOURLY
+  WHERE REGEXP_LIKE(LOWER(event_name), '.*(restart|oom|crash|evict|terminat|fail).*')
+  GROUP BY 1, 2
+) ev ON ev.day = c.day AND ev.pool_name = c.pool_name
+ORDER BY c.day DESC
