@@ -1,0 +1,20 @@
+SELECT
+  compute_pool,
+  service_name,
+  database_name || '.' || schema_name        AS location,
+  status,
+  is_job,
+  current_instances,
+  min_instances,
+  max_instances,
+  auto_suspend_secs,
+  COALESCE(auto_suspend_secs, 0) = 0          AS never_auto_suspends,
+  resumed_on,
+  DATEDIFF('hour', resumed_on, captured_at)   AS hours_since_resume,
+  managing_object_domain,
+  managing_object_name,
+  owner
+FROM ${monitor_schema}.SERVICE_STATE_LOG
+WHERE captured_at = (SELECT MAX(captured_at) FROM ${monitor_schema}.SERVICE_STATE_LOG)
+  AND status IN ('RUNNING', 'PENDING', 'SUSPENDING')
+ORDER BY compute_pool, never_auto_suspends DESC, hours_since_resume DESC

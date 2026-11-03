@@ -25,6 +25,13 @@ resource "snowflake_table" "managed_tables" {
       type     = column.value.type
       nullable = column.value.nullable
       comment  = column.value.comment
+
+      dynamic "default" {
+        for_each = column.value.default_expression == null ? [] : [column.value.default_expression]
+        content {
+          expression = default.value
+        }
+      }
     }
   }
 
@@ -40,7 +47,7 @@ resource "snowflake_table" "managed_tables" {
 # VIEWS
 # ==============================================================================
 resource "snowflake_view" "managed_views" {
-  for_each = var.views
+  for_each = { for k, v in var.views : k => v if !v.after_other_views }
 
   database = split(".", each.key)[0]
   schema   = split(".", each.key)[1]
@@ -51,6 +58,23 @@ resource "snowflake_view" "managed_views" {
   is_secure = tostring(each.value.is_secure)
 
   depends_on = [snowflake_table.managed_tables]
+}
+
+# Views that read other views from this map (after_other_views = true). Terraform
+# cannot order views among themselves from their SQL text, so they are a second
+# group that waits for the first.
+resource "snowflake_view" "managed_views_upper" {
+  for_each = { for k, v in var.views : k => v if v.after_other_views }
+
+  database = split(".", each.key)[0]
+  schema   = split(".", each.key)[1]
+  name     = split(".", each.key)[2]
+
+  statement = each.value.statement
+  comment   = each.value.comment
+  is_secure = tostring(each.value.is_secure)
+
+  depends_on = [snowflake_table.managed_tables, snowflake_view.managed_views]
 }
 
 # ==============================================================================
@@ -76,7 +100,7 @@ resource "snowflake_procedure_sql" "managed_procedures" {
   procedure_definition = each.value.body
   comment              = each.value.comment
 
-  depends_on = [snowflake_table.managed_tables, snowflake_view.managed_views]
+  depends_on = [snowflake_table.managed_tables, snowflake_view.managed_views, snowflake_view.managed_views_upper]
 }
 
 # ==============================================================================
@@ -107,5 +131,5 @@ resource "snowflake_task" "managed_tasks" {
     }
   }
 
-  depends_on = [snowflake_procedure_sql.managed_procedures]
+  depends_on = [snowflake_table.managed_tables, snowflake_procedure_sql.managed_procedures]
 }

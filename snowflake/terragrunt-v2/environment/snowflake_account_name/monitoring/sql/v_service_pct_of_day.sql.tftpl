@@ -1,0 +1,4 @@
+SELECT day, compute_pool, service_name, approx_hours_running,
+       ROUND(100 * approx_hours_running / 24, 0) AS pct_of_day_running,
+       auto_suspend_secs
+FROM ${monitor_schema}.V_SERVICE_RUNNING_HOURS_DAILY

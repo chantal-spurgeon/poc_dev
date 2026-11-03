@@ -1,0 +1,55 @@
+DECLARE
+  -- the hour as a real instant (for the stored labels)
+  h_start     TIMESTAMP_LTZ DEFAULT DATEADD('hour', -1, DATE_TRUNC('hour', CURRENT_TIMESTAMP()));
+  h_end       TIMESTAMP_LTZ DEFAULT DATE_TRUNC('hour', CURRENT_TIMESTAMP());
+  -- the same hour as UTC wall-clock time (for comparing to the event table)
+  h_start_utc TIMESTAMP_NTZ DEFAULT CONVERT_TIMEZONE('UTC', DATEADD('hour', -1, DATE_TRUNC('hour', CURRENT_TIMESTAMP())))::TIMESTAMP_NTZ;
+  h_end_utc   TIMESTAMP_NTZ DEFAULT CONVERT_TIMEZONE('UTC', DATE_TRUNC('hour', CURRENT_TIMESTAMP()))::TIMESTAMP_NTZ;
+BEGIN
+  -- Idempotent: each block deletes then reinserts the hour, so a retry cannot duplicate.
+  DELETE FROM ${monitor_schema}.UTIL_HOURLY WHERE hour = :h_start;
+  INSERT INTO ${monitor_schema}.UTIL_HOURLY
+  SELECT :h_start,
+         RESOURCE_ATTRIBUTES:"snow.compute_pool.name"::string,
+         RESOURCE_ATTRIBUTES:"snow.service.name"::string,
+         RECORD:metric:name::string,
+         APPROX_PERCENTILE(VALUE::float, 0.50),
+         APPROX_PERCENTILE(VALUE::float, 0.95),
+         MAX(VALUE::float)
+  FROM ${event_view}
+  WHERE RECORD_TYPE = 'METRIC'
+    AND TIMESTAMP >= :h_start_utc AND TIMESTAMP < :h_end_utc
+    AND RECORD:metric:name::string IN
+        ('container.cpu.usage','container.cpu.requested','container.cpu.limit','container.memory.usage')
+  GROUP BY 2, 3, 4;
+
+  DELETE FROM ${monitor_schema}.ERRORS_HOURLY WHERE hour = :h_start;
+  INSERT INTO ${monitor_schema}.ERRORS_HOURLY
+  SELECT :h_start,
+         RESOURCE_ATTRIBUTES:"snow.compute_pool.name"::string,
+         RESOURCE_ATTRIBUTES:"snow.service.name"::string,
+         COUNT(*)
+  FROM ${event_view}
+  WHERE RECORD_TYPE = 'LOG'
+    AND TIMESTAMP >= :h_start_utc AND TIMESTAMP < :h_end_utc
+    AND REGEXP_LIKE(VALUE::string, '.*(Traceback|ERROR|Exception|MemoryError|OOM|timed? ?out).*', 'is')
+  GROUP BY 2, 3;
+
+  DELETE FROM ${monitor_schema}.SERVICE_EVENTS_HOURLY WHERE hour = :h_start;
+  INSERT INTO ${monitor_schema}.SERVICE_EVENTS_HOURLY
+  SELECT :h_start,
+         RESOURCE_ATTRIBUTES:"snow.compute_pool.name"::string,
+         RESOURCE_ATTRIBUTES:"snow.service.name"::string,
+         RECORD:name::string,
+         COUNT(*)
+  FROM ${event_view}
+  WHERE RECORD_TYPE = 'EVENT'
+    AND TIMESTAMP >= :h_start_utc AND TIMESTAMP < :h_end_utc
+  GROUP BY 2, 3, 4;
+
+  -- Retention
+  DELETE FROM ${monitor_schema}.POOL_STATE_LOG        WHERE captured_at < DATEADD('day', -${retention_days}, CURRENT_TIMESTAMP());
+  DELETE FROM ${monitor_schema}.UTIL_HOURLY           WHERE hour        < DATEADD('day', -${retention_days}, CURRENT_TIMESTAMP());
+  DELETE FROM ${monitor_schema}.ERRORS_HOURLY         WHERE hour        < DATEADD('day', -${retention_days}, CURRENT_TIMESTAMP());
+  DELETE FROM ${monitor_schema}.SERVICE_EVENTS_HOURLY WHERE hour        < DATEADD('day', -${retention_days}, CURRENT_TIMESTAMP());
+END;

@@ -1,0 +1,27 @@
+WITH running AS (
+  SELECT compute_pool, service_name,
+         COUNT_IF(status = 'RUNNING') AS running_snapshots,
+         MAX(COALESCE(auto_suspend_secs, 0)) AS auto_suspend_secs
+  FROM ${monitor_schema}.SERVICE_STATE_LOG
+  WHERE captured_at >= DATEADD('hour', -24, CURRENT_TIMESTAMP())
+  GROUP BY 1, 2
+),
+cpu AS (
+  SELECT pool_name, service,
+         MAX(max_val) AS max_cpu_cores_24h,
+         AVG(p50)     AS avg_cpu_cores_24h
+  FROM ${monitor_schema}.UTIL_HOURLY
+  WHERE metric = 'container.cpu.usage'
+    AND hour >= DATEADD('hour', -24, CURRENT_TIMESTAMP())
+  GROUP BY 1, 2
+)
+SELECT r.compute_pool, r.service_name, r.running_snapshots,
+       ROUND(r.running_snapshots * ${snapshot_minutes} / 60.0, 1) AS approx_hours_running_24h,
+       r.auto_suspend_secs,
+       c.avg_cpu_cores_24h, c.max_cpu_cores_24h
+FROM running r
+LEFT JOIN cpu c
+  ON UPPER(c.service) = UPPER(r.service_name)   -- event table may hold the name in a different case
+WHERE r.running_snapshots > 0
+  AND COALESCE(c.max_cpu_cores_24h, 0) < ${idle_cpu_cores}
+ORDER BY r.running_snapshots DESC

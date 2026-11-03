@@ -147,7 +147,18 @@ To import resources (example; the key is the one in the unit's `inputs`, here `d
 | `V_EGRESS_REPORT` | view | The table with currency formatting |
 | `POOL_STATE_LOG` | table | `SHOW COMPUTE POOLS` snapshots |
 | `CAPTURE_POOL_STATE` | task | Takes a snapshot every 10 minutes, keeps 90 days |
+| `UTIL_HOURLY`, `ERRORS_HOURLY`, `SERVICE_EVENTS_HOURLY` | tables | Hourly CPU/memory percentiles, error-like log lines and service events per pool and service |
+| `ROLLUP_POOL_TELEMETRY` | task | At :05 each hour, summarises the last completed hour of the event table into the three tables above, and trims all history tables to 90 days |
+| `SERVICE_STATE_LOG` | table | `SHOW SERVICES IN ACCOUNT` snapshots |
+| `CAPTURE_SERVICE_STATE` | task | Takes a snapshot every 10 minutes, keeps 90 days |
+| `POOL_CHANGE_LOG` | table | Written by hand before and after a pool setting change (rollback aid) |
 | `V_POOL_DAILY`, `V_POOL_CREDITS_DAILY` | views | Suspends/resumes/time at max nodes, and credits per day |
+| `V_HEADROOM_7D` | view | Peak CPU/memory per service over 7 days |
+| `V_DAILY_SCORECARD` | view | Credits, suspends/resumes, time at max nodes, errors and restart-like events per pool per day |
+| `V_POOL_KEEPERS_NOW` | view | Services currently keeping each pool awake |
+| `V_SERVICE_RUNNING_HOURS_DAILY`, `V_SERVICE_PCT_OF_DAY`, `V_DAILY_KEEPERS` | views | How long each service ran per day, as hours and as a share of the day |
+| `V_IDLE_BUT_RUNNING_24H` | view | Services that were RUNNING while their CPU stayed near zero |
+| `POOL_SUSPEND_LOG`, `SUSPEND_POOL_IF_IDLE` | table, task | Optional: suspends one pool on weekday evenings if idle. Not created unless `idle_suspend_pool` is set |
 
 How it fits together:
 
@@ -157,7 +168,17 @@ How it fits together:
 - Order: databases, then rbac, then monitoring. `terragrunt run --all apply` follows the `dependencies` blocks.
 - Tasks are serverless unless `local.warehouse` names a warehouse.
 - Tables are never dropped by Terraform (`prevent_destroy`), because they hold history. If a plan wants to replace one, it stops. Change the table with `ALTER TABLE` in SQL instead.
-- Adding more monitors is the same pattern: a table entry, a `.sql.tftpl` file for the procedure or view, a task entry. The remaining scripts (`rollup_pool_telemetry`, the services add-on, `suspend_pool_if_idle`) are not converted yet. The first two need an event table, and `suspend_pool_if_idle` has a pool name to parameterise.
+- Adding more monitors is the same pattern: a table entry, a `.sql.tftpl` file for the procedure or view, a task entry. A view that reads another view in the same list needs `after_other_views = true` so it is created after the others (one level of nesting).
+- Settings at the top of the unit: `event_view` (the event table view the rollup reads), `retention_days`, `snapshot_minutes` (keep equal to the capture schedules; it turns snapshot counts into hours), `idle_cpu_cores` (CPU below this counts as idle).
+- **`SUSPEND_POOL_IF_IDLE` is off by default** (`idle_suspend_pool = null`). Setting a pool name creates the task *stopped* (`started = false`). Once it is started it suspends that pool at :00 and :30 between 8 and 11 PM Eastern whenever no container CPU was busy and no job service ran in the last 30 minutes. If other people's notebooks share that pool, they lose their session. The role also needs OPERATE on the pool (not in rbac yet).
+- Converted from `scripts/compute_pool_monitoring_sql_only.sql`, `compute_pool_monitoring_services_addon.sql`, `suspend_pool_if_idle.sql` and `egress_by_role_task.sql`. The `EXECUTE TASK` and `ALTER TASK ... RESUME` lines in the originals are replaced by `started = true`. The commented discovery queries, the warehouse-side query and the "how to read the scorecard" notes were left in the original files.
+
+Extra checks for the telemetry and services objects (none of the SQL has been run against an account):
+
+- `SELECT COUNT(*) FROM SNOWFLAKE.TELEMETRY.EVENTS_VIEW` as `MONITOR_ADMIN`. If it fails, the role is missing access to the event table (possibly the `SNOWFLAKE.EVENTS_VIEWER` application role; not confirmed here). Also confirm the account's active event table.
+- The metric, attribute and event names in `rollup_pool_telemetry.sql.tftpl` come from the original script, which says to confirm them with its discovery queries first.
+- `SHOW SERVICES IN ACCOUNT` and `SHOW COMPUTE POOLS` only list what the role can see. `MONITOR_ADMIN` needs MONITOR on the pools and services (or to own them), or the snapshots will be empty.
+- The column `default` on `POOL_CHANGE_LOG.CHANGED_AT` uses a provider feature (`default { expression }`) I have not run; if the plan rejects it, remove `default_expression` and fill the column when you insert.
 
 Things to check on the first run:
 
