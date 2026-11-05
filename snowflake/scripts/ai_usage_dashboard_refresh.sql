@@ -163,37 +163,39 @@ BEGIN
             ('deepseek-r1',             0.675, 2.70,  NULL,  NULL),
             ('snowflake-llama-3.3-70b', 0.36,  0.36,  NULL,  NULL)
     ),
+    -- Every branch casts its time to TIMESTAMP_LTZ: some views use LTZ, the CoCo
+    -- views use TIMESTAMP_TZ, and UNION ALL needs one type per column.
     src AS (
         -- Counted toward the monthly budget (same sources as enforcement) --------
-        SELECT u.NAME AS USER_NAME, h.START_TIME AS TS, 'AI Functions' AS SOURCE,
+        SELECT u.NAME AS USER_NAME, TO_TIMESTAMP_LTZ(h.START_TIME) AS TS, 'AI Functions' AS SOURCE,
                h.FUNCTION_NAME || ' · ' || h.MODEL_NAME AS DETAIL, h.CREDITS AS CREDITS, TRUE AS COUNTS
           FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_AI_FUNCTIONS_USAGE_HISTORY h
           JOIN SNOWFLAKE.ACCOUNT_USAGE.USERS u ON h.USER_ID = u.USER_ID
          WHERE h.START_TIME >= :window_start
 
         UNION ALL
-        SELECT USERNAME, START_TIME, 'Cortex Analyst', NULL, CREDITS, TRUE
+        SELECT USERNAME, TO_TIMESTAMP_LTZ(START_TIME), 'Cortex Analyst', NULL, CREDITS, TRUE
           FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_ANALYST_USAGE_HISTORY
          WHERE START_TIME >= :window_start
 
         UNION ALL
-        SELECT USER_NAME, START_TIME, 'Cortex Agents', NULL, TOKEN_CREDITS, TRUE
+        SELECT USER_NAME, TO_TIMESTAMP_LTZ(START_TIME), 'Cortex Agents', NULL, TOKEN_CREDITS, TRUE
           FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_AGENT_USAGE_HISTORY
          WHERE START_TIME >= :window_start
 
         UNION ALL
-        SELECT USER_NAME, START_TIME, 'Snowflake Intelligence', NULL, TOKEN_CREDITS, TRUE
+        SELECT USER_NAME, TO_TIMESTAMP_LTZ(START_TIME), 'Snowflake Intelligence', NULL, TOKEN_CREDITS, TRUE
           FROM SNOWFLAKE.ACCOUNT_USAGE.SNOWFLAKE_INTELLIGENCE_USAGE_HISTORY
          WHERE START_TIME >= :window_start
 
         UNION ALL
-        SELECT u.NAME, h.USAGE_TIME, 'CoCo CLI', NULL, h.TOKEN_CREDITS, TRUE
+        SELECT u.NAME, TO_TIMESTAMP_LTZ(h.USAGE_TIME), 'CoCo CLI', NULL, h.TOKEN_CREDITS, TRUE
           FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_CODE_CLI_USAGE_HISTORY h
           JOIN SNOWFLAKE.ACCOUNT_USAGE.USERS u ON h.USER_ID = u.USER_ID
          WHERE h.USAGE_TIME >= :window_start
 
         UNION ALL
-        SELECT u.NAME, r.START_TIME, 'REST API', r.MODEL_NAME,
+        SELECT u.NAME, TO_TIMESTAMP_LTZ(r.START_TIME), 'REST API', r.MODEL_NAME,
                ROUND(
                    (COALESCE(r.TOKENS_GRANULAR:input::INT,             0) / 1000000.0) * COALESCE(mr.input_rate,       0)
                  + (COALESCE(r.TOKENS_GRANULAR:cache_write_input::INT, 0) / 1000000.0) * COALESCE(mr.cache_write_rate, 0)
@@ -208,18 +210,18 @@ BEGIN
 
         -- Shown but NOT counted toward the monthly budget (enforcement skips them)
         UNION ALL
-        SELECT u.NAME, h.USAGE_TIME, 'CoCo Desktop', NULL, h.TOKEN_CREDITS, FALSE
+        SELECT u.NAME, TO_TIMESTAMP_LTZ(h.USAGE_TIME), 'CoCo Desktop', NULL, h.TOKEN_CREDITS, FALSE
           FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_CODE_DESKTOP_USAGE_HISTORY h
           JOIN SNOWFLAKE.ACCOUNT_USAGE.USERS u ON h.USER_ID = u.USER_ID
          WHERE h.USAGE_TIME >= :window_start
 
         UNION ALL
-        SELECT u.NAME, h.USAGE_TIME, 'CoCo Snowsight', NULL, h.TOKEN_CREDITS, FALSE
+        SELECT u.NAME, TO_TIMESTAMP_LTZ(h.USAGE_TIME), 'CoCo Snowsight', NULL, h.TOKEN_CREDITS, FALSE
           FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_CODE_SNOWSIGHT_USAGE_HISTORY h
           JOIN SNOWFLAKE.ACCOUNT_USAGE.USERS u ON h.USER_ID = u.USER_ID
          WHERE h.USAGE_TIME >= :window_start
     )
-    SELECT TO_TIMESTAMP_LTZ(TS)::DATE, USER_NAME, SOURCE, DETAIL, SUM(CREDITS), COUNTS, :run_ts
+    SELECT TS::DATE, USER_NAME, SOURCE, DETAIL, SUM(CREDITS), COUNTS, :run_ts
       FROM src
      GROUP BY 1, 2, 3, 4, 6;
 
