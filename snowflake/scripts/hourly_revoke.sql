@@ -1,0 +1,134 @@
+CREATE OR REPLACE PROCEDURE AI_COST_MGMT.PUBLIC.ENFORCE_CORTEX_AI_LIMITS()
+RETURNS VARCHAR
+LANGUAGE SQL
+EXECUTE AS CALLER
+AS 'BEGIN
+    LET result VARCHAR DEFAULT ''Enforcement complete'';
+    -- Cursor: find users over budget
+    LET c CURSOR FOR
+
+        WITH 
+        role_members AS (
+            SELECT GRANTEE_NAME AS USER_NAME, ROLE AS TIER_ROLE
+            FROM SNOWFLAKE.ACCOUNT_USAGE.GRANTS_TO_USERS
+            WHERE ROLE IN (''AI_EXPLORER'', ''AI_DATA_SCIENCE'') AND DELETED_ON IS NULL
+        ),
+        
+        -- Per-model token rates for REST API cost estimation (Table 6b: Cortex Inference with Prompt Caching: https://www.snowflake.com/legal-files/CreditConsumptionTable.pdf)
+        model_rates AS (
+            SELECT column1 AS model_name,
+                column2 AS input_rate,
+                column3 AS output_rate,
+                column4 AS cache_write_rate,
+                column5 AS cache_read_rate
+            FROM VALUES
+                (''claude-4-sonnet'',         1.50,  7.50,  1.875, 0.15),
+                (''claude-sonnet-4-5'',       1.50,  7.50,  1.875, 0.15),
+                (''claude-sonnet-4-6'',       1.50,  7.50,  1.875, 0.15),
+                (''claude-sonnet-5'',         1.00,  5.00,  1.25,  0.10),
+                (''claude-haiku-4-5'',        0.50,  2.50,  0.625, 0.05),
+                (''claude-opus-4-5'',         2.50, 12.50,  3.125, 0.25),
+                (''claude-opus-4-6'',         2.50, 12.50,  3.125, 0.25),
+                (''claude-opus-4-7'',         2.50, 12.50,  3.125, 0.25),
+                (''claude-opus-4-8'',         2.50, 12.50,  3.125, 0.25),
+                (''openai-gpt-4.1'',          1.00,  4.00,  NULL,  0.25),
+                (''openai-gpt-5'',            0.625, 5.00,  NULL,  0.065),
+                (''openai-gpt-5-mini'',       0.125, 1.00,  NULL,  0.015),
+                (''openai-gpt-5-nano'',       0.03,  0.22,  NULL,  0.005),
+                (''openai-gpt-5.1'',          0.625, 5.00,  NULL,  0.065),
+                (''openai-gpt-5.2'',          0.875, 7.00,  NULL,  0.09),
+                (''openai-gpt-5.4'',          1.25,  7.50,  NULL,  0.125),
+                (''openai-gpt-5.4-mini'',     0.375, 2.25,  NULL,  0.038),
+                (''openai-gpt-5.4-nano'',     0.10,  0.625, NULL,  0.01),
+                (''grok-4.20'',               0.625, 1.25,  NULL,  0.10),
+                (''grok-4.3'',                0.625, 1.25,  NULL,  0.10),
+                (''llama3.1-405b'',           1.20,  1.20,  NULL,  NULL),
+                (''llama3.1-70b'',            0.36,  0.36,  NULL,  NULL),
+                (''llama3.1-8b'',             0.11,  0.11,  NULL,  NULL),
+                (''llama3.3-70b'',            0.36,  0.36,  NULL,  NULL),
+                (''llama4-maverick'',         0.144, 0.582, NULL,  NULL),
+                (''llama4-scout'',            0.102, 0.396, NULL,  NULL),
+                (''mistral-large2'',          1.00,  3.00,  NULL,  NULL),
+                (''mistral-7b'',              0.075, 0.10,  NULL,  NULL),
+                (''mixtral-8x7b'',            0.27,  0.42,  NULL,  NULL),
+                (''deepseek-r1'',             0.675, 2.70,  NULL,  NULL),
+                (''snowflake-llama-3.3-70b'', 0.36,  0.36,  NULL,  NULL)
+        ),
+        user_spend AS (
+
+            SELECT USER_NAME, SUM(TOKEN_CREDITS) AS TOTAL_CREDITS FROM (
+                
+                SELECT u.NAME AS USER_NAME, h.CREDITS AS TOKEN_CREDITS
+                FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_AI_FUNCTIONS_USAGE_HISTORY h
+                JOIN SNOWFLAKE.ACCOUNT_USAGE.USERS u ON h.USER_ID = u.USER_ID
+                WHERE h.START_TIME >= DATE_TRUNC(''month'', CURRENT_TIMESTAMP())
+                
+                UNION ALL
+                
+                SELECT USERNAME AS USER_NAME, CREDITS AS TOKEN_CREDITS
+                FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_ANALYST_USAGE_HISTORY
+                WHERE START_TIME >= DATE_TRUNC(''month'', CURRENT_TIMESTAMP())
+                
+                UNION ALL
+                
+                SELECT USER_NAME, TOKEN_CREDITS
+                FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_AGENT_USAGE_HISTORY
+                WHERE START_TIME >= DATE_TRUNC(''month'', CURRENT_TIMESTAMP())
+                
+                UNION ALL
+                
+                SELECT USER_NAME, TOKEN_CREDITS 
+                FROM SNOWFLAKE.ACCOUNT_USAGE.SNOWFLAKE_INTELLIGENCE_USAGE_HISTORY
+                WHERE START_TIME >= DATE_TRUNC(''month'', CURRENT_TIMESTAMP())
+                
+                UNION ALL
+                
+                SELECT u.NAME AS USER_NAME, h.TOKEN_CREDITS
+                FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_CODE_CLI_USAGE_HISTORY h
+                JOIN SNOWFLAKE.ACCOUNT_USAGE.USERS u ON h.USER_ID = u.USER_ID
+                WHERE h.USAGE_TIME >= DATE_TRUNC(''month'', CURRENT_TIMESTAMP())
+                
+                UNION ALL
+
+                -- Cortex REST API (estimated TOKEN_CREDITS via model_rates because no native TOKEN_CREDITS column in usage history table)
+                SELECT
+                    u.NAME AS USER_NAME,
+                    ROUND(
+                        (COALESCE(r.TOKENS_GRANULAR:input::INT,            0) / 1000000.0) * COALESCE(mr.input_rate,       0)
+                        + (COALESCE(r.TOKENS_GRANULAR:cache_write_input::INT, 0) / 1000000.0) * COALESCE(mr.cache_write_rate, 0)
+                        + (COALESCE(r.TOKENS_GRANULAR:cache_read_input::INT,  0) / 1000000.0) * COALESCE(mr.cache_read_rate,  0)
+                        + (COALESCE(r.TOKENS_GRANULAR:output::INT,           0) / 1000000.0) * COALESCE(mr.output_rate,      0)
+                    , 6) as TOKEN_CREDITS
+                FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_REST_API_USAGE_HISTORY r
+                LEFT JOIN model_rates mr ON LOWER(r.MODEL_NAME) = LOWER(mr.model_name)
+                JOIN SNOWFLAKE.ACCOUNT_USAGE.USERS u ON r.USER_ID = u.USER_ID
+                WHERE r.START_TIME >= DATE_TRUNC(''month'', CURRENT_TIMESTAMP())
+            
+            ) GROUP BY USER_NAME
+                
+        )
+
+        SELECT 
+            rm.USER_NAME, 
+            rm.TIER_ROLE, 
+            COALESCE(us.TOTAL_CREDITS, 0) AS TOTAL_CREDITS,
+            rb.MONTHLY_CREDIT_LIMIT
+        FROM role_members rm
+        JOIN AI_COST_MGMT.PUBLIC.AI_ROLE_BUDGETS rb ON rm.TIER_ROLE = rb.ROLE_NAME
+        LEFT JOIN user_spend us ON rm.USER_NAME = us.USER_NAME
+        WHERE COALESCE(us.TOTAL_CREDITS, 0) > rb.MONTHLY_CREDIT_LIMIT
+    ;
+
+    FOR rec IN c DO
+        LET v_user VARCHAR := rec.USER_NAME;
+        LET v_role VARCHAR := rec.TIER_ROLE;
+        LET v_credits NUMBER(38,6) := rec.TOTAL_CREDITS;
+        LET v_limit NUMBER(38,6) := rec.MONTHLY_CREDIT_LIMIT;
+
+        EXECUTE IMMEDIATE ''REVOKE ROLE '' || :v_role || '' FROM USER "'' || :v_user || ''"'';
+        INSERT INTO AI_COST_MGMT.PUBLIC.AI_ENFORCEMENT_LOG
+            (USER_NAME, TIER_ROLE, ACTION, CREDITS_USED, CREDIT_LIMIT)
+        VALUES (:v_user, :v_role, ''REVOKED'', :v_credits, :v_limit);
+    END FOR;
+    RETURN :result;
+END';
