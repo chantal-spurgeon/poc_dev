@@ -39,6 +39,21 @@ inputs = {
       }
     }
 
+    # Home of the AI cost management objects (the ai_cost_mgmt unit fills it).
+    # PUBLIC (created with the database) holds budgets, the enforcement log,
+    # procedures and tasks. DASHBOARD is TRANSIENT, so the dashboard tables in it
+    # are transient too (the table resource has no transient setting).
+    # Already exists in prod: import it there instead of creating it (README).
+    "ai_cost_mgmt" = {
+      comment = "AI budgets, enforcement, CoCo limit exceptions and the AI usage dashboard backend"
+      schemas = {
+        "dashboard" = {
+          comment      = "AI usage dashboard tables, rebuilt hourly (transient: no Fail-safe)"
+          is_transient = true
+        }
+      }
+    }
+
 #    "db_stray_kids_replica" = {
 #      comment                  = "Disaster Recovery Archive."
 #      data_retention_time_days = 1

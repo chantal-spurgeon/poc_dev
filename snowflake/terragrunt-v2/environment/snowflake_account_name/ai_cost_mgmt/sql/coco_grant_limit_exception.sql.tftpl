@@ -1,0 +1,117 @@
+-- Procedure body for COCO_GRANT_LIMIT_EXCEPTION (rendered by templatefile()).
+-- From scripts/coco_limit_exception_procedures.sql; only admin_db.util became
+-- $${exceptions_schema}. Arguments are declared in terragrunt.hcl in UPPER CASE,
+-- so the unquoted p_... names below resolve to them.
+DECLARE
+  v_type       STRING;
+  v_name       STRING;
+  v_request_id STRING;
+  v_now        TIMESTAMP_LTZ;
+  v_expires    TIMESTAMP_LTZ;
+  users        ARRAY DEFAULT ARRAY_CONSTRUCT();
+  to_visit     ARRAY DEFAULT ARRAY_CONSTRUCT();
+  visited      ARRAY DEFAULT ARRAY_CONSTRUCT();
+  new_users    ARRAY;
+  new_roles    ARRAY;
+  r            STRING;
+  u            STRING;
+BEGIN
+  v_type := UPPER(TRIM(p_target_type));
+  v_name := UPPER(TRIM(p_target_name));
+
+  -- ---------- Validate inputs ----------
+  IF (v_type IS NULL OR v_type NOT IN ('USER', 'ROLE')) THEN
+    RETURN OBJECT_CONSTRUCT('status', 'ERROR', 'message', 'target_type must be USER or ROLE');
+  END IF;
+  IF (v_name IS NULL OR NOT REGEXP_LIKE(v_name, '^[A-Z0-9_$.@-]+$')) THEN
+    RETURN OBJECT_CONSTRUCT('status', 'ERROR', 'message', 'Invalid user/role name: ' || COALESCE(p_target_name, 'NULL'));
+  END IF;
+  IF (p_limit IS NULL OR p_limit < -1 OR p_limit = 0) THEN
+    RETURN OBJECT_CONSTRUCT('status', 'ERROR', 'message', 'limit must be -1 (unlimited) or greater than 0');
+  END IF;
+  IF (p_days IS NULL OR p_days < 1 OR p_days > 90) THEN
+    RETURN OBJECT_CONSTRUCT('status', 'ERROR', 'message', 'days must be between 1 and 90');
+  END IF;
+  IF (p_approved_by IS NULL OR TRIM(p_approved_by) = '') THEN
+    RETURN OBJECT_CONSTRUCT('status', 'ERROR', 'message', 'approved_by is required');
+  END IF;
+  IF (v_type = 'ROLE' AND v_name = 'PUBLIC') THEN
+    RETURN OBJECT_CONSTRUCT('status', 'ERROR', 'message', 'PUBLIC cannot be given an exception; change the account-level limit instead');
+  END IF;
+
+  -- ---------- Resolve the users to change ----------
+  IF (v_type = 'USER') THEN
+    -- SHOW USERS LIKE treats _ as a wildcard, so filter to the exact name
+    EXECUTE IMMEDIATE 'SHOW USERS LIKE ''' || v_name || '''';
+    SELECT ARRAY_AGG("name") INTO :users
+      FROM TABLE(RESULT_SCAN(LAST_QUERY_ID()))
+     WHERE "name" = :v_name;
+  ELSE
+    -- Walk the role hierarchy upward: users granted this role directly, plus
+    -- users granted any role that has this role granted to it
+    -- (they inherit it). visited prevents loops.
+    to_visit := ARRAY_CONSTRUCT(v_name);
+    WHILE (ARRAY_SIZE(to_visit) > 0) DO
+      r := to_visit[0]::STRING;
+      to_visit := ARRAY_REMOVE_AT(to_visit, 0);
+      IF (ARRAY_CONTAINS(r::VARIANT, visited)) THEN
+        CONTINUE;
+      END IF;
+      visited := ARRAY_APPEND(visited, r);
+
+      EXECUTE IMMEDIATE 'SHOW GRANTS OF ROLE "' || REPLACE(r, '"', '""') || '"';
+      SELECT ARRAY_AGG(IFF("granted_to" = 'USER', "grantee_name", NULL)),
+             ARRAY_AGG(IFF("granted_to" = 'ROLE', "grantee_name", NULL))
+        INTO :new_users, :new_roles
+        FROM TABLE(RESULT_SCAN(LAST_QUERY_ID()));
+
+      users    := ARRAY_CAT(users, new_users);
+      to_visit := ARRAY_CAT(to_visit, new_roles);
+    END WHILE;
+    users := ARRAY_DISTINCT(users);
+  END IF;
+
+  IF (users IS NULL OR ARRAY_SIZE(users) = 0) THEN
+    RETURN OBJECT_CONSTRUCT('status', 'ERROR', 'message',
+           'No users found for ' || v_type || ' ' || v_name);
+  END IF;
+  IF (ARRAY_SIZE(users) > 500) THEN
+    RETURN OBJECT_CONSTRUCT('status', 'ERROR', 'message',
+           'Role resolves to ' || ARRAY_SIZE(users) || ' users (limit 500); request a narrower role');
+  END IF;
+
+  -- ---------- Log and apply ----------
+  v_request_id := UUID_STRING();
+  v_now        := CURRENT_TIMESTAMP();
+  v_expires    := DATEADD('day', p_days, v_now);
+
+  FOR i IN 0 TO ARRAY_SIZE(users) - 1 DO
+    u := users[i]::STRING;
+
+    INSERT INTO ${exceptions_schema}.COCO_LIMIT_EXCEPTION_LOG
+      (request_id, target_type, target_name, user_name, limit_value,
+       approved_by, reason, granted_at, expires_at, status)
+    VALUES
+      (:v_request_id, :v_type, :v_name, :u, :p_limit,
+       :p_approved_by, :p_reason, :v_now, :v_expires, 'ACTIVE');
+
+    CALL ${exceptions_schema}.COCO_APPLY_EFFECTIVE_LIMIT(:u);
+  END FOR;
+
+  RETURN OBJECT_CONSTRUCT(
+           'status',      'OK',
+           'request_id',  v_request_id,
+           'target_type', v_type,
+           'target_name', v_name,
+           'users',       users,
+           'limit',       p_limit,
+           'expires_at',  TO_VARCHAR(v_expires, 'YYYY-MM-DD HH24:MI:SS TZH:TZM'));
+
+EXCEPTION
+  WHEN OTHER THEN
+    -- Typical causes: role doesn't exist, or the owner role lacks privileges.
+    -- If this fires after some users were changed, the log shows which ones;
+    -- revoke the request_id or let it expire.
+    RETURN OBJECT_CONSTRUCT('status', 'ERROR', 'message', SQLERRM,
+                            'sqlstate', SQLSTATE, 'request_id', v_request_id);
+END;

@@ -1,0 +1,30 @@
+-- Procedure body for COCO_EXPIRE_LIMIT_EXCEPTIONS (rendered by templatefile()).
+-- From scripts/coco_limit_exception_procedures.sql; only admin_db.util became
+-- $${exceptions_schema}. Arguments are declared in terragrunt.hcl in UPPER CASE,
+-- so the unquoted p_... names below resolve to them.
+DECLARE
+  v_now TIMESTAMP_LTZ;
+  n     NUMBER DEFAULT 0;
+BEGIN
+  v_now := CURRENT_TIMESTAMP();   -- one cutoff for both statements below
+
+  LET rs RESULTSET := (
+    SELECT DISTINCT user_name
+      FROM ${exceptions_schema}.COCO_LIMIT_EXCEPTION_LOG
+     WHERE status = 'ACTIVE'
+       AND expires_at <= :v_now);
+
+  UPDATE ${exceptions_schema}.COCO_LIMIT_EXCEPTION_LOG
+     SET status = 'EXPIRED', ended_at = :v_now, ended_by = 'EXPIRY_TASK'
+   WHERE status = 'ACTIVE'
+     AND expires_at <= :v_now;
+
+  LET c CURSOR FOR rs;
+  FOR rec IN c DO
+    LET u STRING := rec.user_name;
+    CALL ${exceptions_schema}.COCO_APPLY_EFFECTIVE_LIMIT(:u);
+    n := n + 1;
+  END FOR;
+
+  RETURN n || ' user(s) recalculated after expiry';
+END;

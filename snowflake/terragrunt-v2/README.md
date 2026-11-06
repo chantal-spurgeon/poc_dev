@@ -88,7 +88,7 @@ In Snowflake as ACCOUNTADMIN:
 
 ****************
 
-Run each unit from its own folder (`environment/snowflake_account_name/<unit>`), in this order: databases, integrations, security, warehouses, users, rbac.
+Run each unit from its own folder (`environment/snowflake_account_name/<unit>`), in this order: databases, integrations, security, warehouses, users, rbac, then monitoring and ai_cost_mgmt.
 
 **Plan and run**
 
@@ -159,6 +159,12 @@ To import resources (example; the key is the one in the unit's `inputs`, here `d
 | `V_SERVICE_RUNNING_HOURS_DAILY`, `V_SERVICE_PCT_OF_DAY`, `V_DAILY_KEEPERS` | views | How long each service ran per day, as hours and as a share of the day |
 | `V_IDLE_BUT_RUNNING_24H` | view | Services that were RUNNING while their CPU stayed near zero |
 | `POOL_SUSPEND_LOG`, `SUSPEND_POOL_IF_IDLE` | table, task | Optional: suspends one pool on weekday evenings if idle. Not created unless `idle_suspend_pool` is set |
+| `NOTEBOOK_INVENTORY_LOG`, `NOTEBOOK_DESCRIBE_LOG` | tables | Daily `SHOW NOTEBOOKS` and `DESCRIBE NOTEBOOK` rows, stored whole as VARIANT |
+| `CAPTURE_NOTEBOOK_CONFIG` | task | Fills the two tables above daily at 6:15 AM Central. **Created stopped** |
+| `NOTEBOOK_SERVICE_LOG`, `CAPTURE_NOTEBOOK_SERVICES` | table, task | Notebook-managed services every 10 minutes. **Task created stopped** |
+| `V_NOTEBOOK_INVENTORY`, `V_NOTEBOOK_IDLE_SETTINGS`, `V_NOTEBOOK_SERVICES_NOW` | views | Latest notebook list, idle-shutdown setting per notebook, notebook services running now |
+| `V_NOTEBOOK_ACTIVITY_24H` | view | Hours each notebook service ran in the last 24h against the CPU it used (reads `UTIL_HOURLY`) |
+| `V_NOTEBOOK_CREDITS_DAILY` | view | Credits and execution hours per notebook per day |
 
 How it fits together:
 
@@ -171,7 +177,7 @@ How it fits together:
 - Adding more monitors is the same pattern: a table entry, a `.sql.tftpl` file for the procedure or view, a task entry. A view that reads another view in the same list needs `after_other_views = true` so it is created after the others (one level of nesting).
 - Settings at the top of the unit: `event_view` (the event table view the rollup reads), `retention_days`, `snapshot_minutes` (keep equal to the capture schedules; it turns snapshot counts into hours), `idle_cpu_cores` (CPU below this counts as idle).
 - **`SUSPEND_POOL_IF_IDLE` is off by default** (`idle_suspend_pool = null`). Setting a pool name creates the task *stopped* (`started = false`). Once it is started it suspends that pool at :00 and :30 between 8 and 11 PM Eastern whenever no container CPU was busy and no job service ran in the last 30 minutes. If other people's notebooks share that pool, they lose their session. The role also needs OPERATE on the pool (not in rbac yet).
-- Converted from `scripts/compute_pool_monitoring_sql_only.sql`, `compute_pool_monitoring_services_addon.sql`, `suspend_pool_if_idle.sql` and `egress_by_role_task.sql`. The `EXECUTE TASK` and `ALTER TASK ... RESUME` lines in the originals are replaced by `started = true`. The commented discovery queries, the warehouse-side query and the "how to read the scorecard" notes were left in the original files.
+- Converted from `scripts/compute_pool_monitoring_sql_only.sql`, `compute_pool_monitoring_services_addon.sql`, `suspend_pool_if_idle.sql` `egress_by_role_task.sql` and `notebook_monitoring.sql` (the last one's `MONITOR_DB.OPS` became `${monitor_schema}`, and its fixed 90 days and 10 minutes became `retention_days` and `snapshot_minutes`). The `EXECUTE TASK` and `ALTER TASK ... RESUME` lines in the originals are replaced by `started = true`. The commented discovery queries, the warehouse-side query and the "how to read the scorecard" notes were left in the original files.
 
 Extra checks for the telemetry and services objects (none of the SQL has been run against an account):
 
@@ -188,6 +194,93 @@ Things to check on the first run:
 - **Plan differences.** Column types are written as Snowflake reports them, and view statements contain commas and parentheses, which the provider warns can cause a recurring diff. Look at the first plan after apply: it should show no changes.
 - **Terragrunt functions.** The unit uses `templatefile()` and `get_terragrunt_dir()` inside `inputs`. Terragrunt supports Terraform's built-in functions, but this has not been run.
 - **Versions.** This code targets provider 2.22.1, Terraform 1.16.7 and Terragrunt 1.2.1, the latest stable releases on 2026-10-30 (Terraform 1.17 and Terragrunt 1.2.0 were still release candidates). Provider 2.22.0 turned on nine "experiments" by default, including `INHERITED_GRANTS` and `GRANTS_SAFE_DESTROY`, which can change how grants are read and removed. Read the provider's migration guide for 2.21 to 2.22 before the first apply, and look closely at the grant lines in the first plan.
+
+Notebook monitoring checks (the original script flags these as unconfirmed):
+
+- **Both notebook tasks are created stopped**, as the original script asked. Run each once by hand (`EXECUTE TASK ADMIN_DB.FINOPS.CAPTURE_NOTEBOOK_CONFIG;`, same for `CAPTURE_NOTEBOOK_SERVICES`), check the results, then set `started = true` for each in the monitoring unit and apply.
+- **Field names.** `SHOW NOTEBOOKS` and `DESCRIBE NOTEBOOK` aren't fully documented, so rows are stored whole. `V_NOTEBOOK_IDLE_SETTINGS` assumes the field is `idle_auto_shutdown_time_seconds`. After the first capture, list the real fields with `SELECT DISTINCT f.key FROM ADMIN_DB.FINOPS.NOTEBOOK_DESCRIBE_LOG d, LATERAL FLATTEN(INPUT => d.raw) f;` and edit `sql/v_notebook_idle_settings.sql.tftpl` if it differs.
+- **Service filter.** `CAPTURE_NOTEBOOK_SERVICES` keeps rows where `managing_object_domain ILIKE '%NOTEBOOK%'`. Check the real value with `SELECT DISTINCT managing_object_domain FROM ADMIN_DB.FINOPS.SERVICE_STATE_LOG WHERE managing_object_domain IS NOT NULL;` and edit the template if needed.
+- **Visibility.** `SHOW NOTEBOOKS IN ACCOUNT` and `DESCRIBE NOTEBOOK` only cover notebooks `MONITOR_ADMIN` can see. Failed describes are logged as `{"error":"describe failed"}`; privileges are the usual cause.
+
+****************
+
+**AI cost management unit (budgets, enforcement, CoCo exceptions, dashboard backend)**
+
+`environment/snowflake_account_name/ai_cost_mgmt` creates these objects in `AI_COST_MGMT`, signing in as the new `AI_COST_ADMIN` role:
+
+| Object | Kind | What it does |
+| --- | --- | --- |
+| `PUBLIC.AI_ROLE_BUDGETS` | table | Monthly credit limit per tier role. The rows (e.g. 50 and 100) are data: insert them in SQL |
+| `PUBLIC.AI_ENFORCEMENT_LOG` | table | One row per revoke and per monthly re-grant |
+| `PUBLIC.ENFORCE_CORTEX_AI_LIMITS` + `_TASK` | procedure, task | Hourly: revokes the tier role from users over budget. **Task created stopped** (see below) |
+| `PUBLIC.RESET_ALL_AI_ACCESS` + `_TASK` | procedure, task | 1st of the month: re-grants tier roles. **Task created stopped** |
+| `DASHBOARD.AI_DASH_USAGE_DAILY`, `AI_DASH_USER_STATUS`, `AI_DASH_COCO_24H` | tables | The dashboard's data. Transient (the schema is transient), Time Travel 0 days. Usage keeps `dash_keep_months` of history (default 6) |
+| `PUBLIC.REFRESH_AI_USAGE_DASHBOARD(P_BACKFILL)` + `_TASK` | procedure, task | Hourly at :15: rebuilds the last ~31 days of usage and the two snapshot tables. Read-only on enforcement. `TRUE` reloads the full retention period |
+| `COCO_LIMIT_EXCEPTION_LOG` | table | One row per user per approved CoCo daily-limit exception |
+| `COCO_LIMIT_EXCEPTIONS_ACTIVE` | view | Current exceptions, for the UI and the dashboard |
+| `COCO_APPLY_EFFECTIVE_LIMIT`, `COCO_GRANT_LIMIT_EXCEPTION`, `COCO_REVOKE_LIMIT_EXCEPTION`, `COCO_EXPIRE_LIMIT_EXCEPTIONS` | procedures | Apply, grant, revoke and expire exceptions |
+| `COCO_EXPIRE_LIMIT_EXCEPTIONS_TASK` | task | Hourly at :05: ends expired exceptions |
+
+How it fits together:
+
+- **Sources.** Enforcement and reset are converted unchanged from the prod procedures (`hourly_revoke.sql` and `reset_ai.sql`, taken from git history before the Nov 5 cleanup). The dashboard refresh is the retention version, `scripts/ai_usage_dashboard_refresh_retention.sql`. The exception objects are `scripts/coco_limit_exception_procedures.sql`. In every case only the `''` escaping (the provider adds the `$$` quoting itself) and the schema names changed.
+- **Schemas** are set once at the top of the unit: `ai_schema` (`AI_COST_MGMT.PUBLIC`), `dash_schema` (`AI_COST_MGMT.DASHBOARD`) and `exceptions_schema`. The exception script used `admin_db.util` as a placeholder; **set `exceptions_schema` to where those objects really are in prod** before importing. If it's outside `AI_COST_MGMT`, add matching schema privileges for `AI_COST_ADMIN` in rbac.
+- **Dashboard history.** `dash_keep_months` (top of the unit, default 6) is how many months of usage `AI_DASH_USAGE_DAILY` keeps, including the current one. 2 behaves like the standard two-month version. The hourly run only rebuilds the last ~31 days, so after the first apply, or after raising the setting, load the older months once with `CALL AI_COST_MGMT.PUBLIC.REFRESH_AI_USAGE_DASHBOARD(TRUE);` (a larger one-time `ACCOUNT_USAGE` scan). Lowering it needs no backfill: the next run deletes the older rows.
+- **Dashboard app.** These tables are in `AI_COST_MGMT.DASHBOARD`, not `PUBLIC` as in the script. Use `ai_usage_dashboard_retention.py` (Activity tab up to 180 days) and set its `SCHEMA = "AI_COST_MGMT.DASHBOARD"` for an account built from this unit.
+- **Switching an existing account from the standard refresh.** The retention procedure takes an argument, so Snowflake sees it as a different procedure from the standard one, `REFRESH_AI_USAGE_DASHBOARD()`. If the standard one exists, drop it once with `DROP PROCEDURE AI_COST_MGMT.PUBLIC.REFRESH_AI_USAGE_DASHBOARD();`.
+- **Procedure arguments** are declared in UPPER CASE. The provider quotes argument names, so `P_DAYS` is what the bodies' unquoted `p_days` resolves to. A validation rule enforces it.
+- **`enforcement_started = false`** creates the enforcement and reset tasks stopped. A new account shouldn't start revoking roles on the first apply. Run `CALL AI_COST_MGMT.PUBLIC.ENFORCE_CORTEX_AI_LIMITS();` by hand, check the log, then set it to `true`. For prod, set it to match the tasks' current state.
+- **Session timezone.** The enforcement, reset and refresh procedures take "this month" from the task's session `TIMEZONE` parameter (the account default unless set), not from the cron timezone. Keep the three tasks on the same `TIMEZONE`.
+- Order: databases, then rbac, then ai_cost_mgmt.
+
+Granted by hand (not in Terraform, on purpose). `AI_COST_ADMIN` gets only create rights and `IMPORTED PRIVILEGES` from rbac. Three more things are powerful enough that they should be deliberate:
+
+```sql
+-- 1. Enforcement and reset revoke and grant the tier roles. The procedures run as
+--    CALLER, so the task owner (AI_COST_ADMIN) must own those roles.
+GRANT OWNERSHIP ON ROLE AI_EXPLORER     TO ROLE AI_COST_ADMIN COPY CURRENT GRANTS;
+GRANT OWNERSHIP ON ROLE AI_DATA_SCIENCE TO ROLE AI_COST_ADMIN COPY CURRENT GRANTS;
+
+-- 2. The exception procedures ALTER USER the three CoCo daily-limit parameters
+--    (as OWNER). That needs a role able to modify those users: as in the original
+--    script, ACCOUNTADMIN or a role with enough privileges on the user objects.
+--    Decide this with your security team; it isn't granted here.
+
+-- 3. Read access for the exception UI and the dashboard app (names are placeholders).
+GRANT USAGE ON DATABASE AI_COST_MGMT TO ROLE COCO_EXCEPTION_UI;
+GRANT USAGE ON SCHEMA AI_COST_MGMT.PUBLIC TO ROLE COCO_EXCEPTION_UI;
+GRANT USAGE ON PROCEDURE AI_COST_MGMT.PUBLIC.COCO_GRANT_LIMIT_EXCEPTION(VARCHAR, VARCHAR, NUMBER, VARCHAR, VARCHAR, NUMBER) TO ROLE COCO_EXCEPTION_UI;
+GRANT USAGE ON PROCEDURE AI_COST_MGMT.PUBLIC.COCO_REVOKE_LIMIT_EXCEPTION(VARCHAR, VARCHAR) TO ROLE COCO_EXCEPTION_UI;
+GRANT SELECT ON VIEW AI_COST_MGMT.PUBLIC.COCO_LIMIT_EXCEPTIONS_ACTIVE TO ROLE COCO_EXCEPTION_UI;
+
+GRANT USAGE  ON SCHEMA AI_COST_MGMT.DASHBOARD TO ROLE <APP_OWNER_ROLE>;
+GRANT SELECT ON ALL TABLES IN SCHEMA AI_COST_MGMT.DASHBOARD TO ROLE <APP_OWNER_ROLE>;
+```
+
+Grants made by hand on a view or procedure are lost if Terraform ever replaces that object (for example after a body change that forces re-creation). Check the plan for replacements of `COCO_LIMIT_EXCEPTIONS_ACTIVE` and the two UI procedures, and re-run section 3 if they are replaced.
+
+Bringing the prod objects under management. `AI_COST_MGMT`, `AI_ROLE_BUDGETS`, `AI_ENFORCEMENT_LOG`, the two procedures and tasks, and the exception objects already exist in prod. Before the first apply there:
+
+1. **Check the table definitions.** Compare `DESC TABLE` for `AI_ROLE_BUDGETS` and `AI_ENFORCEMENT_LOG` with the columns in the unit (marked `CHECK`). The column types, and the name of the log's timestamp column (assumed `LOGGED_AT`), were not available here. If the name differs, change it in the unit and in `sql/refresh_ai_usage_dashboard.sql.tftpl` (3 places).
+2. **Check the task names and schedules** (marked `CHECK`) against `SHOW TASKS IN SCHEMA AI_COST_MGMT.PUBLIC;`.
+3. **Import**, then plan. The ID formats below follow the provider's identifiers guide but haven't been verified against 2.22 (as with users and grants above): try one, and adjust if it's rejected.
+   ```
+   # databases unit
+   terragrunt import 'snowflake_database.managed_dbs["ai_cost_mgmt"]' 'AI_COST_MGMT'
+   # ai_cost_mgmt unit (one per object; procedures include their argument types)
+   terragrunt import 'snowflake_table.managed_tables["AI_COST_MGMT.PUBLIC.AI_ROLE_BUDGETS"]' '"AI_COST_MGMT"."PUBLIC"."AI_ROLE_BUDGETS"'
+   terragrunt import 'snowflake_procedure_sql.managed_procedures["AI_COST_MGMT.PUBLIC.ENFORCE_CORTEX_AI_LIMITS"]' '"AI_COST_MGMT"."PUBLIC"."ENFORCE_CORTEX_AI_LIMITS"()'
+   terragrunt import 'snowflake_task.managed_tasks["AI_COST_MGMT.PUBLIC.ENFORCE_CORTEX_AI_LIMITS_TASK"]' '"AI_COST_MGMT"."PUBLIC"."ENFORCE_CORTEX_AI_LIMITS_TASK"'
+   ```
+4. **Plan and run the plan guard.** The procedure bodies were reformatted (the `''` became `'`), so expect the procedures to show an update the first time. They shouldn't be replaced: if the plan shows a replacement, stop and check before applying.
+5. **The procedures' owner changes** if they were created by another role. Snowflake procedures run as their owner (or caller), so confirm `AI_COST_ADMIN` holds the hand grants above before the first enforcement run.
+
+Known issues in the prod enforcement procedures, kept as-is here so the unit matches prod (fixes are drafted in `hourly_revoke_v2.sql` and `reset_ai_v2.sql`, not applied):
+
+- `GRANTS_TO_USERS` lags up to about two hours, so a user revoked at 10:00 can be revoked and logged again at 11:00.
+- One failed `REVOKE` stops the loop for every user after it.
+- A user revoked late on the last day of the month can still look like a role holder when the reset runs, and is skipped for a whole month.
+- CoCo in Snowsight and Desktop is not counted toward the monthly budget (only the CLI is). The dashboard shows it as "not counted".
 
 ## Protections against destroying objects and disturbing existing grants
 

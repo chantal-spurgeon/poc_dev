@@ -1,0 +1,83 @@
+-- Procedure body for RESET_ALL_AI_ACCESS (rendered by templatefile()).
+-- Converted unchanged from the prod procedure (scripts/reset_ai.sql, removed from
+-- scripts/ in the Nov 5 cleanup): only the '' escaping was undone and
+-- AI_COST_MGMT.PUBLIC became $${ai_schema}. The manual assignments and the DNA
+-- role patterns below are prod's own rules.
+BEGIN
+    LET result VARCHAR DEFAULT 'Reset complete';
+    -- Re-grant from enforcement log
+    LET c CURSOR FOR
+    
+        WITH
+
+        -- Manually assign users a specific AI role — add entries here as needed
+        manual_assignments AS (
+            SELECT column1 AS USER_NAME, column2 AS TIER_ROLE
+            FROM VALUES
+                ('ZUCKMAND@CHOP.EDU',  'AI_DATA_SCIENCE'),
+                ('HARRAZM@CHOP.EDU', 'AI_DATA_SCIENCE')
+        ),
+
+        -- Get list of DnA roles
+        dna_members AS (
+            SELECT NAME AS ROLE
+            FROM SNOWFLAKE.ACCOUNT_USAGE.ROLES
+            WHERE DELETED_ON IS NULL
+                AND NAME LIKE '%DNA%'
+                AND NAME NOT LIKE '%NON_DNA%'
+        ),
+
+        -- get list of all the members that should have an AI role
+        role_members AS (
+            SELECT g.GRANTEE_NAME AS USER_NAME, g.ROLE AS TIER_ROLE
+            FROM SNOWFLAKE.ACCOUNT_USAGE.GRANTS_TO_USERS g
+            JOIN dna_members d ON g.ROLE = d.ROLE
+            WHERE g.DELETED_ON IS NULL
+                AND g.GRANTEE_NAME LIKE '%CHOP.EDU'
+                AND g.GRANTEE_NAME NOT LIKE 'SVC_%'
+                AND g.GRANTEE_NAME NOT LIKE 'E_%'
+
+        ), -- select distinct user_name from role_members,
+
+        members_with_an_ai_role as (
+
+            SELECT GRANTEE_NAME AS USER_NAME, ROLE AS TIER_ROLE
+            FROM SNOWFLAKE.ACCOUNT_USAGE.GRANTS_TO_USERS
+            WHERE ROLE IN ('AI_EXPLORER', 'AI_DATA_SCIENCE') AND DELETED_ON IS NULL
+
+        ),
+
+        -- identify all the members in role_members who are not in members_with_an_ai_role
+        members_without_an_ai_role as (
+
+            SELECT rm.USER_NAME, rm.TIER_ROLE
+            FROM role_members rm
+            LEFT JOIN members_with_an_ai_role mw ON rm.USER_NAME = mw.USER_NAME
+            WHERE mw.USER_NAME IS NULL            
+
+        )
+
+        select distinct 
+            user_name,
+            -- use data science role for DNA_DATA_SCIENTISTS, and explorer role for all other DNA roles
+            iff(TIER_ROLE = 'DNA_DATA_SCIENTISTS', 'AI_DATA_SCIENCE', 'AI_EXPLORER') as TIER_ROLE
+        from members_without_an_ai_role
+
+        UNION ALL
+
+        -- include manually assigned users with their explicitly specified role
+        SELECT USER_NAME, TIER_ROLE FROM manual_assignments;
+
+    FOR rec IN c DO
+        LET v_user VARCHAR := rec.USER_NAME;
+        LET v_role VARCHAR := rec.TIER_ROLE;
+
+        EXECUTE IMMEDIATE
+          'GRANT ROLE ' || :v_role
+          || ' TO USER "' || :v_user || '"';
+        INSERT INTO ${ai_schema}.AI_ENFORCEMENT_LOG
+          (USER_NAME, TIER_ROLE, ACTION, CREDITS_USED, CREDIT_LIMIT)
+        VALUES (:v_user, :v_role, 'RESET', 0, 0);
+    END FOR;
+    RETURN :result;
+END

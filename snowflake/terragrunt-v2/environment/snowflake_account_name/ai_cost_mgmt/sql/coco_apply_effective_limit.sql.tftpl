@@ -1,0 +1,35 @@
+-- Procedure body for COCO_APPLY_EFFECTIVE_LIMIT (rendered by templatefile()).
+-- From scripts/coco_limit_exception_procedures.sql; only admin_db.util became
+-- $${exceptions_schema}. Arguments are declared in terragrunt.hcl in UPPER CASE,
+-- so the unquoted p_... names below resolve to them.
+DECLARE
+  n_active NUMBER;
+  eff      NUMBER;
+  quoted   STRING;
+BEGIN
+  -- Highest active limit wins; -1 (unlimited) beats any number
+  SELECT COUNT(*),
+         IFF(MAX(IFF(limit_value = -1, 1, 0)) = 1, -1, MAX(limit_value))
+    INTO :n_active, :eff
+    FROM ${exceptions_schema}.COCO_LIMIT_EXCEPTION_LOG
+   WHERE user_name  = :p_user
+     AND status     = 'ACTIVE'
+     AND expires_at > CURRENT_TIMESTAMP();
+
+  quoted := '"' || REPLACE(p_user, '"', '""') || '"';
+
+  IF (n_active = 0) THEN
+    -- No exceptions left: return the user to the account default
+    EXECUTE IMMEDIATE 'ALTER USER ' || quoted || ' UNSET '
+      || 'CORTEX_CODE_SNOWSIGHT_DAILY_EST_CREDIT_LIMIT_PER_USER, '
+      || 'CORTEX_CODE_CLI_DAILY_EST_CREDIT_LIMIT_PER_USER, '
+      || 'CORTEX_CODE_DESKTOP_DAILY_EST_CREDIT_LIMIT_PER_USER';
+    RETURN 'UNSET';
+  ELSE
+    EXECUTE IMMEDIATE 'ALTER USER ' || quoted || ' SET '
+      || 'CORTEX_CODE_SNOWSIGHT_DAILY_EST_CREDIT_LIMIT_PER_USER = ' || eff
+      || ' CORTEX_CODE_CLI_DAILY_EST_CREDIT_LIMIT_PER_USER = '     || eff
+      || ' CORTEX_CODE_DESKTOP_DAILY_EST_CREDIT_LIMIT_PER_USER = ' || eff;
+    RETURN 'SET ' || eff;
+  END IF;
+END;
