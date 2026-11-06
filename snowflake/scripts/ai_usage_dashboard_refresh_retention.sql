@@ -122,9 +122,12 @@ BEGIN
     -- RETENTION: a normal (hourly) run rebuilds this month or the last 30 days,
     -- whichever reaches further back. A backfill run rebuilds everything back to
     -- keep_from (one larger ACCOUNT_USAGE scan; it keeps a year of history).
+    -- Never earlier than keep_from (matters only for keep_months = 2, e.g. on
+    -- March 1, when 30 days back reaches into January).
     window_start := IFF(p_backfill,
                         keep_from,
-                        LEAST(month_start, DATEADD('day', -30, DATE_TRUNC('day', run_ts))));
+                        GREATEST(keep_from,
+                                 LEAST(month_start, DATEADD('day', -30, DATE_TRUNC('day', run_ts)))));
 
     -------------------------------------------------------------------------
     -- 1. Usage per user / day / source / detail
