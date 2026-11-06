@@ -193,6 +193,52 @@ inputs = {
         { name = "ACTION", type = "VARCHAR(16777216)" },
       ]
     }
+
+    # --- Notebook monitoring (from scripts/notebook_monitoring.sql) ---
+
+    "${local.schema}.NOTEBOOK_INVENTORY_LOG" = {
+      comment = "Daily SHOW NOTEBOOKS IN ACCOUNT, one row per notebook as VARIANT (filled by CAPTURE_NOTEBOOK_CONFIG)"
+      columns = [
+        { name = "CAPTURED_AT", type = "TIMESTAMP_LTZ(9)" },
+        { name = "RAW", type = "VARIANT", comment = "One SHOW NOTEBOOKS row as a JSON object" },
+      ]
+    }
+
+    "${local.schema}.NOTEBOOK_DESCRIBE_LOG" = {
+      comment = "Daily DESCRIBE NOTEBOOK per notebook as VARIANT (filled by CAPTURE_NOTEBOOK_CONFIG)"
+      columns = [
+        { name = "CAPTURED_AT", type = "TIMESTAMP_LTZ(9)" },
+        { name = "DATABASE_NAME", type = "VARCHAR(16777216)" },
+        { name = "SCHEMA_NAME", type = "VARCHAR(16777216)" },
+        { name = "NOTEBOOK_NAME", type = "VARCHAR(16777216)" },
+        { name = "RAW", type = "VARIANT", comment = "DESCRIBE NOTEBOOK row(s) as JSON; {\"error\":...} if it failed" },
+      ]
+    }
+
+    "${local.schema}.NOTEBOOK_SERVICE_LOG" = {
+      comment = "SHOW SERVICES rows for notebook-managed services every 10 minutes (filled by CAPTURE_NOTEBOOK_SERVICES)"
+      columns = [
+        { name = "CAPTURED_AT", type = "TIMESTAMP_LTZ(9)" },
+        { name = "SERVICE_NAME", type = "VARCHAR(16777216)" },
+        { name = "DATABASE_NAME", type = "VARCHAR(16777216)" },
+        { name = "SCHEMA_NAME", type = "VARCHAR(16777216)" },
+        { name = "OWNER", type = "VARCHAR(16777216)" },
+        { name = "COMPUTE_POOL", type = "VARCHAR(16777216)" },
+        { name = "STATUS", type = "VARCHAR(16777216)" },
+        { name = "IS_JOB", type = "BOOLEAN" },
+        { name = "CURRENT_INSTANCES", type = "NUMBER(38,0)" },
+        { name = "MIN_INSTANCES", type = "NUMBER(38,0)" },
+        { name = "MAX_INSTANCES", type = "NUMBER(38,0)" },
+        { name = "AUTO_RESUME", type = "BOOLEAN" },
+        { name = "AUTO_SUSPEND_SECS", type = "NUMBER(38,0)" },
+        { name = "CREATED_ON", type = "TIMESTAMP_LTZ(9)" },
+        { name = "RESUMED_ON", type = "TIMESTAMP_LTZ(9)" },
+        { name = "SUSPENDED_ON", type = "TIMESTAMP_LTZ(9)" },
+        { name = "MANAGING_OBJECT_DOMAIN", type = "VARCHAR(16777216)" },
+        { name = "MANAGING_OBJECT_NAME", type = "VARCHAR(16777216)", comment = "The notebook that manages the service" },
+        { name = "COMMENT", type = "VARCHAR(16777216)" },
+      ]
+    }
   }
 
   # ---------------------------------------------------------------------------
@@ -252,6 +298,34 @@ inputs = {
       statement = trimspace(templatefile("${local.sql_dir}/v_daily_keepers.sql.tftpl", local.sql_vars))
       after_other_views = true # reads other views in this list
     }
+
+    # --- Notebook monitoring ---
+
+    "${local.schema}.V_NOTEBOOK_INVENTORY" = {
+      comment   = "Latest notebook list, fields parsed out of the raw SHOW NOTEBOOKS row"
+      statement = trimspace(templatefile("${local.sql_dir}/v_notebook_inventory.sql.tftpl", local.sql_vars))
+    }
+
+    "${local.schema}.V_NOTEBOOK_IDLE_SETTINGS" = {
+      comment   = "Configured idle shutdown per notebook (latest DESCRIBE). The field name is a guess: see README"
+      statement = trimspace(templatefile("${local.sql_dir}/v_notebook_idle_settings.sql.tftpl", local.sql_vars))
+    }
+
+    "${local.schema}.V_NOTEBOOK_SERVICES_NOW" = {
+      comment   = "Notebook services running in the latest snapshot, longest since resume first"
+      statement = trimspace(templatefile("${local.sql_dir}/v_notebook_services_now.sql.tftpl", local.sql_vars))
+    }
+
+    "${local.schema}.V_NOTEBOOK_ACTIVITY_24H" = {
+      comment   = "Per notebook service, last 24h: hours RUNNING vs CPU used, and its idle setting"
+      statement = trimspace(templatefile("${local.sql_dir}/v_notebook_activity_24h.sql.tftpl", local.sql_vars))
+      after_other_views = true # reads V_NOTEBOOK_IDLE_SETTINGS
+    }
+
+    "${local.schema}.V_NOTEBOOK_CREDITS_DAILY" = {
+      comment   = "Credits and execution hours per notebook per day (ACCOUNT_USAGE lags up to ~3 hours)"
+      statement = trimspace(templatefile("${local.sql_dir}/v_notebook_credits_daily.sql.tftpl", local.sql_vars))
+    }
   }
 
   # ---------------------------------------------------------------------------
@@ -302,6 +376,29 @@ inputs = {
       warehouse = local.warehouse
       schedule  = { minutes = 10 }
       started   = true
+    }
+
+    # --- Notebook monitoring. Created STOPPED, as the original script says:
+    # run each once by hand (EXECUTE TASK), check the README's notebook checks,
+    # then set started = true and apply.
+
+    # Daily: SHOW NOTEBOOKS, then DESCRIBE NOTEBOOK for each, stored as VARIANT.
+    "${local.schema}.CAPTURE_NOTEBOOK_CONFIG" = {
+      comment   = "Daily: snapshot SHOW NOTEBOOKS and DESCRIBE NOTEBOOK into the notebook log tables"
+      statement = trimspace(templatefile("${local.sql_dir}/capture_notebook_config.sql.tftpl", local.sql_vars))
+      warehouse = local.warehouse
+      schedule  = { using_cron = "15 6 * * * America/Chicago" }
+      started   = false
+    }
+
+    # Every 10 minutes: notebook-managed services. Filters on managing_object_domain
+    # ILIKE '%NOTEBOOK%' (an assumption; see README).
+    "${local.schema}.CAPTURE_NOTEBOOK_SERVICES" = {
+      comment   = "Every 10 minutes: snapshot notebook-managed services into NOTEBOOK_SERVICE_LOG"
+      statement = trimspace(templatefile("${local.sql_dir}/capture_notebook_services.sql.tftpl", local.sql_vars))
+      warehouse = local.warehouse
+      schedule  = { minutes = 10 }
+      started   = false
     }
   },
 

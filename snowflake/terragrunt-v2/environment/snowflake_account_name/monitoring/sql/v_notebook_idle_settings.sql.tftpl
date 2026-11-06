@@ -1,0 +1,8 @@
+SELECT d.captured_at,
+       d.database_name, d.schema_name, d.notebook_name,
+       TRY_TO_NUMBER(GET_IGNORE_CASE(d.raw, 'idle_auto_shutdown_time_seconds')::string) AS idle_shutdown_secs,
+       GET_IGNORE_CASE(d.raw, 'runtime_name')::string   AS runtime_name,
+       GET_IGNORE_CASE(d.raw, 'compute_pool')::string   AS compute_pool,
+       d.raw
+FROM ${monitor_schema}.NOTEBOOK_DESCRIBE_LOG d
+WHERE d.captured_at = (SELECT MAX(captured_at) FROM ${monitor_schema}.NOTEBOOK_DESCRIBE_LOG)

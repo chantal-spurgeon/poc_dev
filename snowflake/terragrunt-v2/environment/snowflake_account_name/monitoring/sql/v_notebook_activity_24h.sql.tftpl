@@ -1,0 +1,26 @@
+WITH svc AS (
+  SELECT compute_pool, service_name, managing_object_name AS notebook,
+         COUNT_IF(status = 'RUNNING')                                        AS snapshots_running,
+         ROUND(COUNT_IF(status = 'RUNNING') * ${snapshot_minutes} / 60.0, 1) AS approx_hours_running
+  FROM ${monitor_schema}.NOTEBOOK_SERVICE_LOG
+  WHERE captured_at >= DATEADD('hour', -24, CURRENT_TIMESTAMP())
+  GROUP BY 1, 2, 3
+),
+cpu AS (
+  SELECT UPPER(service) AS service_u,
+         MAX(max_val)   AS max_cpu_cores,
+         AVG(p50)       AS avg_cpu_cores
+  FROM ${monitor_schema}.UTIL_HOURLY
+  WHERE metric = 'container.cpu.usage'
+    AND hour >= DATEADD('hour', -24, CURRENT_TIMESTAMP())
+  GROUP BY 1
+)
+SELECT s.compute_pool, s.service_name, s.notebook,
+       s.approx_hours_running,
+       ROUND(c.max_cpu_cores, 3) AS max_cpu_cores_24h,
+       ROUND(c.avg_cpu_cores, 3) AS avg_cpu_cores_24h,
+       i.idle_shutdown_secs
+FROM svc s
+LEFT JOIN cpu c ON c.service_u = UPPER(s.service_name)
+LEFT JOIN ${monitor_schema}.V_NOTEBOOK_IDLE_SETTINGS i ON UPPER(i.notebook_name) = UPPER(s.notebook)
+ORDER BY s.approx_hours_running DESC

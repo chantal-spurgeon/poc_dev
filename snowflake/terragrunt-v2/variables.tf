@@ -189,6 +189,12 @@ variable "tables" {
       comment  = optional(string)
       # SQL expression used as the column default, e.g. "CURRENT_TIMESTAMP()"
       default_expression = optional(string)
+      # Identity (AUTOINCREMENT) column, e.g. { start = 1, step = 1 }.
+      # Not together with default_expression.
+      identity = optional(object({
+        start = optional(number, 1)
+        step  = optional(number, 1)
+      }))
     }))
   }))
   description = "Tables, keyed DATABASE.SCHEMA.TABLE. Never dropped by Terraform (prevent_destroy)."
@@ -197,6 +203,12 @@ variable "tables" {
   validation {
     condition     = alltrue([for k in keys(var.tables) : can(regex("^[A-Z0-9_$]+\\.[A-Z0-9_$]+\\.[A-Z0-9_$]+$", k))])
     error_message = "Table keys must be DATABASE.SCHEMA.TABLE in UPPER CASE."
+  }
+  validation {
+    condition = alltrue(flatten([
+      for k, t in var.tables : [for c in t.columns : !(c.identity != null && c.default_expression != null)]
+    ]))
+    error_message = "A column can have identity or default_expression, not both."
   }
 }
 
@@ -221,9 +233,14 @@ variable "views" {
 variable "procedures" {
   type = map(object({
     comment = optional(string)
+    # Write argument names in UPPER CASE. The provider creates them quoted, so an
+    # upper-case name is the one the body can use unquoted (p_x in the body
+    # resolves to P_X). default makes the argument optional for callers; it is
+    # a SQL literal, e.g. "NULL", "30" or "'X'".
     arguments = optional(list(object({
-      name = string
-      type = string
+      name    = string
+      type    = string
+      default = optional(string)
     })), [])
     returns    = string
     execute_as = optional(string, "OWNER") # OWNER or CALLER
@@ -239,6 +256,12 @@ variable "procedures" {
   validation {
     condition     = alltrue([for k, v in var.procedures : contains(["OWNER", "CALLER"], upper(v.execute_as))])
     error_message = "execute_as must be OWNER or CALLER."
+  }
+  validation {
+    condition = alltrue(flatten([
+      for k, p in var.procedures : [for a in p.arguments : a.name == upper(a.name)]
+    ]))
+    error_message = "Procedure argument names must be UPPER CASE (the provider quotes them; see the comment on arguments)."
   }
 }
 

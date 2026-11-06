@@ -1,0 +1,43 @@
+-- Procedure body for COCO_REVOKE_LIMIT_EXCEPTION (rendered by templatefile()).
+-- From scripts/coco_limit_exception_procedures.sql; only admin_db.util became
+-- $${exceptions_schema}. Arguments are declared in terragrunt.hcl in UPPER CASE,
+-- so the unquoted p_... names below resolve to them.
+DECLARE
+  v_now TIMESTAMP_LTZ;
+  n     NUMBER DEFAULT 0;
+BEGIN
+  IF (p_revoked_by IS NULL OR TRIM(p_revoked_by) = '') THEN
+    RETURN OBJECT_CONSTRUCT('status', 'ERROR', 'message', 'revoked_by is required');
+  END IF;
+
+  v_now := CURRENT_TIMESTAMP();
+
+  -- Capture affected users before changing status
+  LET rs RESULTSET := (
+    SELECT DISTINCT user_name
+      FROM ${exceptions_schema}.COCO_LIMIT_EXCEPTION_LOG
+     WHERE request_id = :p_request_id
+       AND status = 'ACTIVE');
+
+  UPDATE ${exceptions_schema}.COCO_LIMIT_EXCEPTION_LOG
+     SET status = 'REVOKED', ended_at = :v_now, ended_by = :p_revoked_by
+   WHERE request_id = :p_request_id
+     AND status = 'ACTIVE';
+
+  LET c CURSOR FOR rs;
+  FOR rec IN c DO
+    LET u STRING := rec.user_name;
+    CALL ${exceptions_schema}.COCO_APPLY_EFFECTIVE_LIMIT(:u);
+    n := n + 1;
+  END FOR;
+
+  IF (n = 0) THEN
+    RETURN OBJECT_CONSTRUCT('status', 'ERROR', 'message',
+           'No active exception found for request_id ' || COALESCE(p_request_id, 'NULL'));
+  END IF;
+  RETURN OBJECT_CONSTRUCT('status', 'OK', 'request_id', p_request_id, 'users_recalculated', n);
+
+EXCEPTION
+  WHEN OTHER THEN
+    RETURN OBJECT_CONSTRUCT('status', 'ERROR', 'message', SQLERRM, 'sqlstate', SQLSTATE);
+END;

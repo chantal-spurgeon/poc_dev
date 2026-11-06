@@ -1,0 +1,14 @@
+BEGIN
+  SHOW SERVICES IN ACCOUNT;
+  INSERT INTO ${monitor_schema}.NOTEBOOK_SERVICE_LOG
+  SELECT CURRENT_TIMESTAMP(), "name", "database_name", "schema_name", "owner",
+         "compute_pool", "status", "is_job", "current_instances", "min_instances",
+         "max_instances", "auto_resume", "auto_suspend_secs", "created_on",
+         "resumed_on", "suspended_on", "managing_object_domain",
+         "managing_object_name", "comment"
+  FROM TABLE(RESULT_SCAN(LAST_QUERY_ID()))
+  WHERE "managing_object_domain" ILIKE '%NOTEBOOK%';
+
+  DELETE FROM ${monitor_schema}.NOTEBOOK_SERVICE_LOG
+   WHERE captured_at < DATEADD('day', -${retention_days}, CURRENT_TIMESTAMP());
+END;

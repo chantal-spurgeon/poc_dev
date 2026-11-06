@@ -1,0 +1,8 @@
+SELECT compute_pool, service_name, managing_object_name AS notebook,
+       status, auto_suspend_secs, resumed_on,
+       DATEDIFF('hour', resumed_on, captured_at) AS hours_since_resume,
+       owner
+FROM ${monitor_schema}.NOTEBOOK_SERVICE_LOG
+WHERE captured_at = (SELECT MAX(captured_at) FROM ${monitor_schema}.NOTEBOOK_SERVICE_LOG)
+  AND status IN ('RUNNING', 'PENDING', 'SUSPENDING')
+ORDER BY compute_pool, hours_since_resume DESC

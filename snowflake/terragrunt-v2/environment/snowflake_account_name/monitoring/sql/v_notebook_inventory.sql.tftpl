@@ -1,0 +1,11 @@
+SELECT captured_at,
+       raw:"database_name"::string   AS database_name,
+       raw:"schema_name"::string     AS schema_name,
+       raw:"name"::string            AS notebook_name,
+       raw:"owner"::string           AS owner,
+       raw:"query_warehouse"::string AS query_warehouse,
+       raw:"code_warehouse"::string  AS code_warehouse,
+       raw:"created_on"::string      AS created_on,
+       raw:"comment"::string         AS comment
+FROM ${monitor_schema}.NOTEBOOK_INVENTORY_LOG
+WHERE captured_at = (SELECT MAX(captured_at) FROM ${monitor_schema}.NOTEBOOK_INVENTORY_LOG)

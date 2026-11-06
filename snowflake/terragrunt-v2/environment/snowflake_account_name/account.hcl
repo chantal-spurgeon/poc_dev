@@ -25,6 +25,7 @@ locals {
     users        = "SECURITYADMIN"
     rbac         = "SECURITYADMIN"
     monitoring   = "MONITOR_ADMIN" # created in the rbac unit; owns the monitoring objects
+    ai_cost_mgmt = "AI_COST_ADMIN" # created in the rbac unit; owns the AI cost management objects
   }
 
   # The private key and passphrase are not set here. The Snowflake provider reads

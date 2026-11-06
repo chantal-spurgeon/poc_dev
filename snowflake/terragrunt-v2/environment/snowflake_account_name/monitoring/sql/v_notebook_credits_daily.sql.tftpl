@@ -1,0 +1,8 @@
+SELECT DATE_TRUNC('day', start_time)                        AS day,
+       notebook_name,
+       compute_pool_name,
+       service_name,
+       SUM(credits)                                         AS credits,
+       ROUND(SUM(notebook_execution_time_secs) / 3600.0, 2) AS execution_hours
+FROM SNOWFLAKE.ACCOUNT_USAGE.NOTEBOOKS_CONTAINER_RUNTIME_HISTORY
+GROUP BY 1, 2, 3, 4

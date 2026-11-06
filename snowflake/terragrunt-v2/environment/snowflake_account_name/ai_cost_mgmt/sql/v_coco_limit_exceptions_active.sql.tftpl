@@ -1,0 +1,13 @@
+SELECT request_id,
+       target_type,
+       target_name,
+       user_name,
+       limit_value,
+       approved_by,
+       reason,
+       granted_at,
+       expires_at,
+       DATEDIFF('day', CURRENT_TIMESTAMP(), expires_at) AS days_remaining
+  FROM ${exceptions_schema}.COCO_LIMIT_EXCEPTION_LOG
+ WHERE status = 'ACTIVE'
+   AND expires_at > CURRENT_TIMESTAMP()

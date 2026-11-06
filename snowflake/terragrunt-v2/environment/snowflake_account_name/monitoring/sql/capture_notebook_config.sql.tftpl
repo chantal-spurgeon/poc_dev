@@ -1,0 +1,33 @@
+DECLARE
+  ts TIMESTAMP_LTZ DEFAULT CURRENT_TIMESTAMP();
+  c  CURSOR FOR
+     SELECT raw:"database_name"::string AS db,
+            raw:"schema_name"::string   AS sch,
+            raw:"name"::string          AS nb
+     FROM ${monitor_schema}.NOTEBOOK_INVENTORY_LOG
+     WHERE captured_at = (SELECT MAX(captured_at) FROM ${monitor_schema}.NOTEBOOK_INVENTORY_LOG);
+BEGIN
+  SHOW NOTEBOOKS IN ACCOUNT;
+  INSERT INTO ${monitor_schema}.NOTEBOOK_INVENTORY_LOG
+    SELECT :ts, OBJECT_CONSTRUCT(*) FROM TABLE(RESULT_SCAN(LAST_QUERY_ID()));
+
+  FOR r IN c DO
+    LET v_db  STRING := r.db;
+    LET v_sch STRING := r.sch;
+    LET v_nb  STRING := r.nb;
+    LET fq    STRING := '"' || v_db || '"."' || v_sch || '"."' || v_nb || '"';
+    BEGIN
+      DESCRIBE NOTEBOOK IDENTIFIER(:fq);
+      INSERT INTO ${monitor_schema}.NOTEBOOK_DESCRIBE_LOG
+        SELECT :ts, :v_db, :v_sch, :v_nb, OBJECT_CONSTRUCT(*)
+        FROM TABLE(RESULT_SCAN(LAST_QUERY_ID()));
+    EXCEPTION
+      WHEN OTHER THEN
+        INSERT INTO ${monitor_schema}.NOTEBOOK_DESCRIBE_LOG
+          SELECT :ts, :v_db, :v_sch, :v_nb, PARSE_JSON('{"error":"describe failed"}');
+    END;
+  END FOR;
+
+  DELETE FROM ${monitor_schema}.NOTEBOOK_INVENTORY_LOG WHERE captured_at < DATEADD('day', -${retention_days}, CURRENT_TIMESTAMP());
+  DELETE FROM ${monitor_schema}.NOTEBOOK_DESCRIBE_LOG  WHERE captured_at < DATEADD('day', -${retention_days}, CURRENT_TIMESTAMP());
+END;

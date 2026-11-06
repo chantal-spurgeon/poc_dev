@@ -32,6 +32,14 @@ resource "snowflake_table" "managed_tables" {
           expression = default.value
         }
       }
+
+      dynamic "identity" {
+        for_each = column.value.identity == null ? [] : [column.value.identity]
+        content {
+          start_num = identity.value.start
+          step_num  = identity.value.step
+        }
+      }
     }
   }
 
@@ -90,8 +98,9 @@ resource "snowflake_procedure_sql" "managed_procedures" {
   dynamic "arguments" {
     for_each = each.value.arguments
     content {
-      arg_name      = arguments.value.name
-      arg_data_type = arguments.value.type
+      arg_name          = arguments.value.name
+      arg_data_type     = arguments.value.type
+      arg_default_value = arguments.value.default
     }
   }
 

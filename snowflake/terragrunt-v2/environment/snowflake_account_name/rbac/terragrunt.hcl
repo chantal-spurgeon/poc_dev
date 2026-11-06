@@ -16,7 +16,7 @@ inputs = {
   account_roles = {
     "SYSADMIN" = {
       comment               = "Native Snowflake system administrator role"
-      granted_roles         = ["PRODUCER8", "SECURITY_ADMIN_CUSTOM8", "MONITOR_ADMIN"]
+      granted_roles         = ["PRODUCER8", "SECURITY_ADMIN_CUSTOM8", "MONITOR_ADMIN", "AI_COST_ADMIN"]
       granted_users         = []
     },
 
@@ -63,6 +63,27 @@ inputs = {
       }
       schema_privileges = {
         "ADMIN_DB.FINOPS" = ["USAGE", "CREATE TABLE", "CREATE VIEW", "CREATE PROCEDURE", "CREATE TASK"]
+      }
+    },
+
+    # Owns the AI cost management objects (budgets, enforcement, CoCo limit
+    # exceptions, dashboard backend) and is the role the ai_cost_mgmt unit signs
+    # in with. Two more powers it needs are NOT granted here, on purpose; give
+    # them by hand (README, "AI cost management unit"):
+    #   - ownership of AI_EXPLORER and AI_DATA_SCIENCE (to revoke and re-grant them)
+    #   - the right to ALTER USER the three CoCo daily-limit parameters
+    "AI_COST_ADMIN" = {
+      comment            = "Owner of the AI cost management objects"
+      granted_users      = ["BANGCHAN8"]
+      account_privileges = ["EXECUTE TASK", "EXECUTE MANAGED TASK"]
+
+      database_privileges = {
+        "AI_COST_MGMT" = ["USAGE"]
+        "SNOWFLAKE"    = ["IMPORTED PRIVILEGES"] # reads ACCOUNT_USAGE (AI usage, grants, users)
+      }
+      schema_privileges = {
+        "AI_COST_MGMT.PUBLIC"    = ["USAGE", "CREATE TABLE", "CREATE VIEW", "CREATE PROCEDURE", "CREATE TASK"]
+        "AI_COST_MGMT.DASHBOARD" = ["USAGE", "CREATE TABLE"]
       }
     },
 
