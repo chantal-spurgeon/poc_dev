@@ -18,8 +18,8 @@
     Travel, no Fail-safe), and hold only what the dashboard shows:
     AI_DASH_USAGE_DAILY   per user / day / source / detail; previous + current
                           month only (older rows deleted every run)
-    AI_DASH_USER_STATUS   per user + tier role: limit, used, ACTIVE / OVER_LIMIT /
-                          REVOKED; current snapshot only (overwritten every run)
+    AI_DASH_USER_STATUS   one row per user, on the tier role that governs their
+                          access: limit, used, ACTIVE / OVER_LIMIT / REVOKED; current snapshot only (overwritten every run)
     AI_DASH_COCO_24H      per user + CoCo interface: last-24h credits vs daily
                           limit; current snapshot only (overwritten every run)
     REFRESH_AI_USAGE_DASHBOARD()       hourly procedure
@@ -27,9 +27,6 @@
 
   CHECK BEFORE RUNNING (not run against a live account; test in dev first)
     - LOGGED_AT (3 places, marked CHECK): AI_ENFORCEMENT_LOG's timestamp column.
-    - admin_db.util.coco_limit_exceptions_active (1 place): where the CoCo
-      exception objects were deployed. If they aren't deployed, step 3 just
-      fails quietly and the rest still refreshes.
     - default_daily (10): should match the account-level CoCo daily limits.
     - The task must run with the same session timezone as the enforcement task,
       so "this month" starts at the same moment in both.
@@ -273,32 +270,38 @@ BEGIN
       FROM members m
       JOIN AI_COST_MGMT.PUBLIC.AI_ROLE_BUDGETS rb ON m.TIER_ROLE = rb.ROLE_NAME
       LEFT JOIN spend   s ON m.USER_NAME = s.USER_NAME
-      LEFT JOIN revoked r ON m.USER_NAME = r.USER_NAME AND m.TIER_ROLE = r.TIER_ROLE;
+      LEFT JOIN revoked r ON m.USER_NAME = r.USER_NAME AND m.TIER_ROLE = r.TIER_ROLE
+    -- One row per user. A user with several tier roles is shown on the role
+    -- that actually governs their access: a role they still hold (not revoked
+    -- this month) first, then the highest limit. If every role was revoked,
+    -- the highest one is shown as REVOKED.
+    QUALIFY ROW_NUMBER() OVER (
+                PARTITION BY m.USER_NAME
+                ORDER BY IFF(r.USER_NAME IS NULL, 0, 1),     -- still held first
+                         rb.MONTHLY_CREDIT_LIMIT DESC,       -- then highest limit
+                         m.TIER_ROLE                         -- tie-break, stable
+            ) = 1;
 
     -------------------------------------------------------------------------
-    -- 3. CoCo last 24 hours per interface vs the daily limit
-    --    (isolated: a failure here doesn't stop the refresh)
+    -- 3. CoCo last 24 hours per interface vs the account-level daily limit.
+    --    No exceptions yet: every user gets default_daily. EXCEPTION_EXPIRES_AT
+    --    stays NULL so the table shape (and the app) won't need to change if
+    --    exceptions are added later.
+    --    Isolated: a failure here doesn't stop the refresh.
     -------------------------------------------------------------------------
     BEGIN
         INSERT OVERWRITE INTO AI_COST_MGMT.PUBLIC.AI_DASH_COCO_24H
-        WITH ex AS (
-            SELECT USER_NAME,
-                   IFF(MIN(LIMIT_VALUE) = -1, -1, MAX(LIMIT_VALUE)) AS LIMIT_VALUE,  -- highest wins, -1 = unlimited
-                   MAX(EXPIRES_AT) AS EXPIRES_AT
-              FROM admin_db.util.coco_limit_exceptions_active                      -- CHECK: deployed location
-             GROUP BY USER_NAME
-        )
+            (USER_NAME, INTERFACE, CREDITS_24H, DAILY_LIMIT, EXCEPTION_EXPIRES_AT, REFRESHED_AT)
         SELECT u.NAME,
                h.INTERFACE,
                SUM(h.TOKEN_CREDITS),
-               COALESCE(ex.LIMIT_VALUE, :default_daily),
-               ex.EXPIRES_AT,
+               :default_daily,
+               NULL,
                :run_ts
           FROM SNOWFLAKE.ACCOUNT_USAGE.SNOWFLAKE_COCO_USAGE_HISTORY h
           JOIN SNOWFLAKE.ACCOUNT_USAGE.USERS u ON h.USER_ID = u.USER_ID
-          LEFT JOIN ex ON ex.USER_NAME = u.NAME
          WHERE h.USAGE_TIME >= DATEADD('hour', -24, CURRENT_TIMESTAMP())
-         GROUP BY u.NAME, h.INTERFACE, ex.LIMIT_VALUE, ex.EXPIRES_AT;
+         GROUP BY u.NAME, h.INTERFACE;
     EXCEPTION
         WHEN OTHER THEN
             coco_msg := 'failed: ' || SQLERRM;
