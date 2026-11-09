@@ -1,0 +1,136 @@
+-- Procedure body for AI_GRANT_QUOTA_EXCEPTION (rendered by templatefile()).
+-- Called by the ticket UI's Accept button: temporarily raises one user's
+-- monthly AI credit quota by granting $${quota_exception_role} (the higher
+-- budget in AI_ROLE_BUDGETS). Same calling pattern as COCO_GRANT_LIMIT_EXCEPTION:
+-- one request_id per Accept, VARIANT result with status OK or ERROR.
+--
+-- P_DAYS NULL (default) = until the next monthly reset (start of next month),
+-- since budgets are calendar-month. Otherwise 1-31 days from now. "Next month"
+-- is taken in the caller's session TIMEZONE, so the UI's session should use
+-- the same TIMEZONE as the enforcement and reset tasks.
+--
+-- A second request for a user who already has an active exception adds a row;
+-- the role stays until the last active row expires (as with the daily limits).
+--
+-- Arguments are declared in terragrunt.hcl in UPPER CASE, so the unquoted p_...
+-- names below resolve to them.
+DECLARE
+  v_user        STRING;
+  v_disabled    STRING;
+  v_request_id  STRING;
+  v_now         TIMESTAMP_LTZ;
+  v_month_start TIMESTAMP_LTZ;
+  v_expires     TIMESTAMP_LTZ;
+  v_base        STRING;
+  v_latest      STRING;
+  n             NUMBER;
+  n_active      NUMBER;
+BEGIN
+  v_user := UPPER(TRIM(p_user));
+
+  -- ---------- Validate inputs ----------
+  IF (v_user IS NULL OR NOT REGEXP_LIKE(v_user, '^[A-Z0-9_$.@-]+$')) THEN
+    RETURN OBJECT_CONSTRUCT('status', 'ERROR', 'message', 'Invalid user name: ' || COALESCE(p_user, 'NULL'));
+  END IF;
+  IF (p_days IS NOT NULL AND (p_days < 1 OR p_days > 31)) THEN
+    RETURN OBJECT_CONSTRUCT('status', 'ERROR', 'message', 'days must be between 1 and 31, or NULL for the rest of the month');
+  END IF;
+  IF (p_approved_by IS NULL OR TRIM(p_approved_by) = '') THEN
+    RETURN OBJECT_CONSTRUCT('status', 'ERROR', 'message', 'approved_by is required');
+  END IF;
+
+  -- SHOW USERS LIKE treats _ as a wildcard, so filter to the exact name
+  EXECUTE IMMEDIATE 'SHOW USERS LIKE ''' || v_user || '''';
+  SELECT COUNT(*), MAX("disabled")
+    INTO :n, :v_disabled
+    FROM TABLE(RESULT_SCAN(LAST_QUERY_ID()))
+   WHERE "name" = :v_user;
+  IF (n = 0) THEN
+    RETURN OBJECT_CONSTRUCT('status', 'ERROR', 'message', 'User not found: ' || v_user);
+  END IF;
+  IF (LOWER(v_disabled) = 'true') THEN
+    RETURN OBJECT_CONSTRUCT('status', 'ERROR', 'message', 'User is disabled: ' || v_user);
+  END IF;
+
+  v_now         := CURRENT_TIMESTAMP();
+  v_month_start := DATE_TRUNC('month', v_now);
+  v_expires     := IFF(p_days IS NULL,
+                       DATEADD('month', 1, v_month_start),
+                       DATEADD('day', p_days, v_now));
+
+  -- ---------- The exception role's own budget used up this month? ----------
+  -- Granting it again would only be revoked by the next enforcement run.
+  SELECT MAX_BY(action, logged_at)                                   -- CHECK: LOGGED_AT
+    INTO :v_latest
+    FROM ${ai_schema}.AI_ENFORCEMENT_LOG
+   WHERE user_name = :v_user
+     AND tier_role = '${quota_exception_role}'
+     AND logged_at >= :v_month_start                                 -- CHECK: LOGGED_AT
+     AND action IN ('REVOKED', 'RESET');
+  IF (v_latest = 'REVOKED') THEN
+    RETURN OBJECT_CONSTRUCT('status', 'ERROR', 'message',
+           v_user || ' already used the ${quota_exception_role} budget this month; '
+           || 'this exception cannot raise it further');
+  END IF;
+
+  -- ---------- Base role ----------
+  SELECT COUNT(*), MAX_BY(base_role, granted_at)
+    INTO :n_active, :v_base
+    FROM ${exceptions_schema}.AI_QUOTA_EXCEPTION_LOG
+   WHERE user_name = :v_user
+     AND status    = 'ACTIVE';
+
+  IF (n_active = 0) THEN
+    -- Holding the exception role outside an exception = already on the top tier
+    EXECUTE IMMEDIATE 'SHOW GRANTS OF ROLE "${quota_exception_role}"';
+    SELECT COUNT(*) INTO :n
+      FROM TABLE(RESULT_SCAN(LAST_QUERY_ID()))
+     WHERE "granted_to" = 'USER' AND "grantee_name" = :v_user;
+    IF (n > 0) THEN
+      RETURN OBJECT_CONSTRUCT('status', 'ERROR', 'message',
+             v_user || ' already holds ${quota_exception_role}; no higher tier to grant');
+    END IF;
+
+    -- Base role = the lower tier, if the user holds it now or has held it
+    -- (it may have been revoked for budget, which is usually why they ask).
+    EXECUTE IMMEDIATE 'SHOW GRANTS OF ROLE "${quota_base_role}"';
+    SELECT COUNT(*) INTO :n
+      FROM TABLE(RESULT_SCAN(LAST_QUERY_ID()))
+     WHERE "granted_to" = 'USER' AND "grantee_name" = :v_user;
+    IF (n = 0) THEN
+      SELECT COUNT(*) INTO :n
+        FROM ${ai_schema}.AI_ENFORCEMENT_LOG
+       WHERE user_name = :v_user
+         AND tier_role = '${quota_base_role}';
+    END IF;
+    v_base := IFF(n > 0, '${quota_base_role}', NULL);
+  END IF;
+
+  -- ---------- Log and apply ----------
+  v_request_id := UUID_STRING();
+
+  INSERT INTO ${exceptions_schema}.AI_QUOTA_EXCEPTION_LOG
+    (request_id, user_name, granted_role, base_role,
+     approved_by, reason, granted_at, expires_at, status)
+  VALUES
+    (:v_request_id, :v_user, '${quota_exception_role}', :v_base,
+     :p_approved_by, :p_reason, :v_now, :v_expires, 'ACTIVE');
+
+  CALL ${exceptions_schema}.AI_APPLY_QUOTA_EXCEPTION(:v_user);
+
+  RETURN OBJECT_CONSTRUCT(
+           'status',       'OK',
+           'request_id',   v_request_id,
+           'user',         v_user,
+           'granted_role', '${quota_exception_role}',
+           'base_role',    v_base,
+           'added_to_active_exception', n_active > 0,
+           'expires_at',   TO_VARCHAR(v_expires, 'YYYY-MM-DD HH24:MI:SS TZH:TZM'));
+
+EXCEPTION
+  WHEN OTHER THEN
+    -- Typical cause: the owner role doesn't own the tier roles. If the row was
+    -- logged but the grant failed, revoke the request_id or let it expire.
+    RETURN OBJECT_CONSTRUCT('status', 'ERROR', 'message', SQLERRM,
+                            'sqlstate', SQLSTATE, 'request_id', v_request_id);
+END;

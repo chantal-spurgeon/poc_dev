@@ -1,0 +1,47 @@
+-- Procedure body for AI_EXPIRE_QUOTA_EXCEPTIONS (rendered by templatefile()).
+-- Called by the expiry task. For each user with an exception past its expiry:
+-- recalculate their roles first, then mark the rows EXPIRED. A user whose
+-- recalculation fails keeps their rows ACTIVE and is retried on the next run
+-- (AI_APPLY_QUOTA_EXCEPTION already ignores rows past expires_at), so one
+-- failure never leaves a role granted with the log saying it ended.
+DECLARE
+  v_now    TIMESTAMP_LTZ;
+  v_action STRING;
+  n_ok     NUMBER DEFAULT 0;
+  n_failed NUMBER DEFAULT 0;
+BEGIN
+  v_now := CURRENT_TIMESTAMP();   -- one cutoff for the whole run
+
+  LET rs RESULTSET := (
+    SELECT DISTINCT user_name
+      FROM ${exceptions_schema}.AI_QUOTA_EXCEPTION_LOG
+     WHERE status = 'ACTIVE'
+       AND expires_at <= :v_now);
+
+  LET c CURSOR FOR rs;
+  FOR rec IN c DO
+    LET u STRING := rec.user_name;
+    BEGIN
+      CALL ${exceptions_schema}.AI_APPLY_QUOTA_EXCEPTION(:u);
+      SELECT $1 INTO :v_action FROM TABLE(RESULT_SCAN(LAST_QUERY_ID()));
+
+      UPDATE ${exceptions_schema}.AI_QUOTA_EXCEPTION_LOG
+         SET status = 'EXPIRED', ended_at = :v_now, ended_by = 'EXPIRY_TASK',
+             end_action = :v_action
+       WHERE user_name = :u
+         AND status = 'ACTIVE'
+         AND expires_at <= :v_now;
+      n_ok := n_ok + 1;
+    EXCEPTION
+      WHEN OTHER THEN
+        UPDATE ${exceptions_schema}.AI_QUOTA_EXCEPTION_LOG
+           SET end_action = 'EXPIRY FAILED ' || TO_VARCHAR(:v_now, 'YYYY-MM-DD HH24:MI') || ': ' || :SQLERRM
+         WHERE user_name = :u
+           AND status = 'ACTIVE'
+           AND expires_at <= :v_now;
+        n_failed := n_failed + 1;
+    END;
+  END FOR;
+
+  RETURN n_ok || ' user(s) recalculated after expiry, ' || n_failed || ' failed (retried next run)';
+END;

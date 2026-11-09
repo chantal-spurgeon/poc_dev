@@ -1,8 +1,8 @@
 # environment/snowflake_account_name/ai_cost_mgmt/terragrunt.hcl
 #
 # AI cost management: monthly AI budgets per tier role (hourly revoke, monthly
-# reset), CoCo daily-limit exceptions, and the backend of the self-service AI
-# usage dashboard. Same pattern as the monitoring unit: tables, views,
+# reset), CoCo daily-limit exceptions, monthly-quota exceptions (temporary
+# AI_DATA_SCIENCE grant), and the backend of the self-service AI usage dashboard. Same pattern as the monitoring unit: tables, views,
 # procedures and tasks, with the SQL in sql/*.sql.tftpl.
 #
 # Needs, from the other units:
@@ -15,7 +15,7 @@
 #     the enforcement and reset procedures can revoke and grant them
 #   - AI_COST_ADMIN must be able to ALTER USER ... SET/UNSET the three CoCo
 #     daily-limit parameters, for the exception procedures
-#   - the exception UI role's USAGE on two procedures and SELECT on one view
+#   - the exception UI role's USAGE on four procedures and SELECT on two views
 #   - the Streamlit app owner's SELECT on the three dashboard tables
 #
 # EXISTING PROD OBJECTS. AI_COST_MGMT, AI_ROLE_BUDGETS, AI_ENFORCEMENT_LOG and
@@ -43,6 +43,12 @@ locals {
   # placeholder. Set this to where they are deployed in prod before importing.
   exceptions_schema = "AI_COST_MGMT.PUBLIC"
 
+  # Monthly-quota exceptions raise a user's budget by granting the higher tier
+  # role for a while; the base role is what they go back to. Both must be in
+  # AI_ROLE_BUDGETS and owned by AI_COST_ADMIN (README, hand grants).
+  quota_exception_role = "AI_DATA_SCIENCE"
+  quota_base_role      = "AI_EXPLORER"
+
   # null = serverless tasks. Set a warehouse name to run the tasks on it instead
   # (then add USAGE on it to AI_COST_ADMIN in rbac).
   warehouse = null
@@ -67,11 +73,13 @@ locals {
   sql_dir = "${get_terragrunt_dir()}/sql"
 
   sql_vars = {
-    ai_schema          = local.ai_schema
-    dash_schema        = local.dash_schema
-    exceptions_schema  = local.exceptions_schema
-    coco_default_daily = local.coco_default_daily
-    dash_keep_months   = local.dash_keep_months
+    ai_schema            = local.ai_schema
+    dash_schema          = local.dash_schema
+    exceptions_schema    = local.exceptions_schema
+    quota_exception_role = local.quota_exception_role
+    quota_base_role      = local.quota_base_role
+    coco_default_daily   = local.coco_default_daily
+    dash_keep_months     = local.dash_keep_months
   }
 }
 
@@ -172,6 +180,27 @@ inputs = {
         { name = "ENDED_BY", type = "VARCHAR(16777216)", comment = "Revoker name, or EXPIRY_TASK" },
       ]
     }
+
+    # --- monthly-quota exceptions (new; not in prod yet, nothing to import) ---
+
+    "${local.exceptions_schema}.AI_QUOTA_EXCEPTION_LOG" = {
+      comment = "One row per approved monthly-quota exception (temporary higher tier role); audit trail and source of truth"
+      columns = [
+        { name = "EXCEPTION_ID", type = "NUMBER(38,0)", identity = { start = 1, step = 1 } },
+        { name = "REQUEST_ID", type = "VARCHAR(16777216)", comment = "One per Accept click" },
+        { name = "USER_NAME", type = "VARCHAR(16777216)" },
+        { name = "GRANTED_ROLE", type = "VARCHAR(16777216)", comment = "Tier role granted for the exception" },
+        { name = "BASE_ROLE", type = "VARCHAR(16777216)", comment = "Tier role restored when it ends (unless revoked for budget this month); NULL = none" },
+        { name = "APPROVED_BY", type = "VARCHAR(16777216)" },
+        { name = "REASON", type = "VARCHAR(16777216)" },
+        { name = "GRANTED_AT", type = "TIMESTAMP_LTZ(9)" },
+        { name = "EXPIRES_AT", type = "TIMESTAMP_LTZ(9)" },
+        { name = "STATUS", type = "VARCHAR(16777216)", comment = "ACTIVE, EXPIRED or REVOKED" },
+        { name = "ENDED_AT", type = "TIMESTAMP_LTZ(9)" },
+        { name = "ENDED_BY", type = "VARCHAR(16777216)", comment = "Revoker name, or EXPIRY_TASK" },
+        { name = "END_ACTION", type = "VARCHAR(16777216)", comment = "What happened to the roles when it ended, or the last expiry error" },
+      ]
+    }
   }
 
   # ---------------------------------------------------------------------------
@@ -181,6 +210,11 @@ inputs = {
     "${local.exceptions_schema}.COCO_LIMIT_EXCEPTIONS_ACTIVE" = {
       comment   = "Current CoCo limit exceptions, one row per user, with days remaining (for the UI)"
       statement = trimspace(templatefile("${local.sql_dir}/v_coco_limit_exceptions_active.sql.tftpl", local.sql_vars))
+    }
+
+    "${local.exceptions_schema}.AI_QUOTA_EXCEPTIONS_ACTIVE" = {
+      comment   = "Current monthly-quota exceptions, one row per request, with days remaining (for the UI)"
+      statement = trimspace(templatefile("${local.sql_dir}/v_ai_quota_exceptions_active.sql.tftpl", local.sql_vars))
     }
   }
 
@@ -257,6 +291,47 @@ inputs = {
       execute_as = "OWNER"
       body       = trimspace(templatefile("${local.sql_dir}/coco_expire_limit_exceptions.sql.tftpl", local.sql_vars))
     }
+
+    # --- monthly-quota exceptions ---
+
+    "${local.exceptions_schema}.AI_APPLY_QUOTA_EXCEPTION" = {
+      comment    = "Internal: grants or revokes one user's exception role from their active exceptions, restoring the base role. Do not grant to the UI."
+      arguments  = [{ name = "P_USER", type = "VARCHAR" }]
+      returns    = "VARCHAR"
+      execute_as = "OWNER"
+      body       = trimspace(templatefile("${local.sql_dir}/ai_apply_quota_exception.sql.tftpl", local.sql_vars))
+    }
+
+    "${local.exceptions_schema}.AI_GRANT_QUOTA_EXCEPTION" = {
+      comment = "Called by the UI's Accept button: temporarily raises a user's monthly AI quota by granting the higher tier role"
+      arguments = [
+        { name = "P_USER", type = "VARCHAR" },
+        { name = "P_APPROVED_BY", type = "VARCHAR" },
+        { name = "P_REASON", type = "VARCHAR", default = "NULL" },
+        { name = "P_DAYS", type = "NUMBER", default = "NULL" }, # NULL = until the next monthly reset
+      ]
+      returns    = "VARIANT"
+      execute_as = "OWNER"
+      body       = trimspace(templatefile("${local.sql_dir}/ai_grant_quota_exception.sql.tftpl", local.sql_vars))
+    }
+
+    "${local.exceptions_schema}.AI_REVOKE_QUOTA_EXCEPTION" = {
+      comment = "Optional early end of one approved monthly-quota request"
+      arguments = [
+        { name = "P_REQUEST_ID", type = "VARCHAR" },
+        { name = "P_REVOKED_BY", type = "VARCHAR" },
+      ]
+      returns    = "VARIANT"
+      execute_as = "OWNER"
+      body       = trimspace(templatefile("${local.sql_dir}/ai_revoke_quota_exception.sql.tftpl", local.sql_vars))
+    }
+
+    "${local.exceptions_schema}.AI_EXPIRE_QUOTA_EXCEPTIONS" = {
+      comment    = "Called by the expiry task: ends monthly-quota exceptions past their expiry and recalculates those users"
+      returns    = "VARCHAR"
+      execute_as = "OWNER"
+      body       = trimspace(templatefile("${local.sql_dir}/ai_expire_quota_exceptions.sql.tftpl", local.sql_vars))
+    }
   }
 
   # ---------------------------------------------------------------------------
@@ -298,6 +373,17 @@ inputs = {
       statement = "CALL ${local.exceptions_schema}.COCO_EXPIRE_LIMIT_EXCEPTIONS();"
       warehouse = local.warehouse
       schedule  = { using_cron = "5 * * * * America/Chicago" }
+      started   = true
+    }
+
+    # :10, after enforcement (:00) and the CoCo expiry (:05). On the 1st it runs
+    # after the reset (00:00); AI_APPLY_QUOTA_EXCEPTION restores the base role
+    # the reset skipped because the user still held the exception role.
+    "${local.exceptions_schema}.AI_EXPIRE_QUOTA_EXCEPTIONS_TASK" = {
+      comment   = "Hourly: end monthly-quota exceptions past their expiry date"
+      statement = "CALL ${local.exceptions_schema}.AI_EXPIRE_QUOTA_EXCEPTIONS();"
+      warehouse = local.warehouse
+      schedule  = { using_cron = "10 * * * * America/Chicago" }
       started   = true
     }
   }
