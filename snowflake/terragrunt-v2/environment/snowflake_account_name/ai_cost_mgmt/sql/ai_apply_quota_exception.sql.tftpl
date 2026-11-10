@@ -1,0 +1,82 @@
+-- Procedure body for AI_APPLY_QUOTA_EXCEPTION (rendered by templatefile()).
+-- Internal: brings one user's tier roles in line with their monthly-quota
+-- exceptions. Same idea as COCO_APPLY_EFFECTIVE_LIMIT, but for roles.
+--
+--   Active exception left -> make sure the user holds $${quota_exception_role}.
+--   None left             -> revoke $${quota_exception_role}, then give back the
+--                            user's base role ($${quota_base_role}) unless
+--                            enforcement revoked that role this month.
+--
+-- Why the base role is given back here: the 1st-of-month reset only grants a
+-- tier role to users who hold none. A user still on the exception role at the
+-- reset is skipped, and would otherwise have no AI role at all once the
+-- exception ends. If enforcement revoked the base role this month, the user is
+-- over that budget, so it is left revoked until the next reset.
+--
+-- Arguments are declared in terragrunt.hcl in UPPER CASE, so the unquoted p_...
+-- names below resolve to them.
+DECLARE
+  n_active      NUMBER;
+  n_held        NUMBER;
+  v_base        STRING;
+  v_latest      STRING;
+  v_month_start TIMESTAMP_LTZ;
+  quoted        STRING;
+  v_result      STRING;
+BEGIN
+  quoted := '"' || REPLACE(p_user, '"', '""') || '"';
+
+  SELECT COUNT(*)
+    INTO :n_active
+    FROM ${exceptions_schema}.AI_QUOTA_EXCEPTION_LOG
+   WHERE user_name  = :p_user
+     AND status     = 'ACTIVE'
+     AND expires_at > CURRENT_TIMESTAMP();
+
+  IF (n_active > 0) THEN
+    EXECUTE IMMEDIATE 'GRANT ROLE "${quota_exception_role}" TO USER ' || quoted;
+    RETURN 'HOLDS ${quota_exception_role}';
+  END IF;
+
+  -- ---------- No active exception: take the role back ----------
+  EXECUTE IMMEDIATE 'SHOW GRANTS OF ROLE "${quota_exception_role}"';
+  SELECT COUNT(*)
+    INTO :n_held
+    FROM TABLE(RESULT_SCAN(LAST_QUERY_ID()))
+   WHERE "granted_to"   = 'USER'
+     AND "grantee_name" = :p_user;
+
+  IF (n_held > 0) THEN
+    EXECUTE IMMEDIATE 'REVOKE ROLE "${quota_exception_role}" FROM USER ' || quoted;
+    v_result := 'REVOKED ${quota_exception_role}';
+  ELSE
+    v_result := '${quota_exception_role} already gone';
+  END IF;
+
+  -- ---------- Give back the base role if it wasn't revoked for budget ----------
+  SELECT MAX_BY(base_role, granted_at)
+    INTO :v_base
+    FROM ${exceptions_schema}.AI_QUOTA_EXCEPTION_LOG
+   WHERE user_name = :p_user;
+
+  IF (v_base IS NULL) THEN
+    RETURN v_result || '; no base role to restore';
+  END IF;
+
+  -- Same rule as the dashboard: the latest REVOKED/RESET row this month wins.
+  v_month_start := DATE_TRUNC('month', CURRENT_TIMESTAMP());
+  SELECT MAX_BY(action, logged_at)                                   -- CHECK: LOGGED_AT
+    INTO :v_latest
+    FROM ${ai_schema}.AI_ENFORCEMENT_LOG
+   WHERE user_name = :p_user
+     AND tier_role = :v_base
+     AND logged_at >= :v_month_start                                 -- CHECK: LOGGED_AT
+     AND action IN ('REVOKED', 'RESET');
+
+  IF (v_latest = 'REVOKED') THEN
+    RETURN v_result || '; ' || v_base || ' left revoked (over budget this month)';
+  END IF;
+
+  EXECUTE IMMEDIATE 'GRANT ROLE "' || REPLACE(v_base, '"', '""') || '" TO USER ' || quoted;
+  RETURN v_result || '; RESTORED ' || v_base;
+END;
