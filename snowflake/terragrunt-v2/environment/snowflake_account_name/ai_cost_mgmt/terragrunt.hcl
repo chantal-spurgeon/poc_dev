@@ -49,6 +49,14 @@ locals {
   quota_exception_role = "AI_DATA_SCIENCE"
   quota_base_role      = "AI_EXPLORER"
 
+  # Who the 1st-of-month reset gives a tier role back to.
+  #   "dna"       = current configuration: members of DNA roles only
+  #                 (sql/reset_all_ai_access.sql.tftpl)
+  #   "all_users" = after the rollout: every eligible user gets AI_EXPLORER
+  #                 (sql/reset_all_ai_access_all_users.sql.tftpl). Switching
+  #                 and calling the reset once by hand IS the rollout (README).
+  reset_scope = "dna"
+
   # null = serverless tasks. Set a warehouse name to run the tasks on it instead
   # (then add USAGE on it to AI_COST_ADMIN in rbac).
   warehouse = null
@@ -236,7 +244,14 @@ inputs = {
       comment    = "Monthly: grants a tier role to every eligible user without one, and logs it"
       returns    = "VARCHAR"
       execute_as = "CALLER"
-      body       = trimspace(templatefile("${local.sql_dir}/reset_all_ai_access.sql.tftpl", local.sql_vars))
+      body = trimspace(templatefile(
+        # Unknown reset_scope values fail here instead of silently picking one
+        {
+          dna       = "${local.sql_dir}/reset_all_ai_access.sql.tftpl"
+          all_users = "${local.sql_dir}/reset_all_ai_access_all_users.sql.tftpl"
+        }[local.reset_scope],
+        local.sql_vars
+      ))
     }
 
     # --- dashboard backend ---
