@@ -1,0 +1,52 @@
+-- Procedure body for AI_REVOKE_QUOTA_EXCEPTION (rendered by templatefile()).
+-- Optional early end of one approved request (same pattern as
+-- COCO_REVOKE_LIMIT_EXCEPTION). The user keeps $${quota_exception_role} if
+-- another request for them is still active.
+--
+-- Arguments are declared in terragrunt.hcl in UPPER CASE, so the unquoted p_...
+-- names below resolve to them.
+DECLARE
+  v_now    TIMESTAMP_LTZ;
+  v_action STRING;
+  n        NUMBER DEFAULT 0;
+BEGIN
+  IF (p_revoked_by IS NULL OR TRIM(p_revoked_by) = '') THEN
+    RETURN OBJECT_CONSTRUCT('status', 'ERROR', 'message', 'revoked_by is required');
+  END IF;
+
+  v_now := CURRENT_TIMESTAMP();
+
+  -- Capture affected users before changing status
+  LET rs RESULTSET := (
+    SELECT DISTINCT user_name
+      FROM ${exceptions_schema}.AI_QUOTA_EXCEPTION_LOG
+     WHERE request_id = :p_request_id
+       AND status = 'ACTIVE');
+
+  UPDATE ${exceptions_schema}.AI_QUOTA_EXCEPTION_LOG
+     SET status = 'REVOKED', ended_at = :v_now, ended_by = :p_revoked_by
+   WHERE request_id = :p_request_id
+     AND status = 'ACTIVE';
+
+  LET c CURSOR FOR rs;
+  FOR rec IN c DO
+    LET u STRING := rec.user_name;
+    CALL ${exceptions_schema}.AI_APPLY_QUOTA_EXCEPTION(:u);
+    SELECT $1 INTO :v_action FROM TABLE(RESULT_SCAN(LAST_QUERY_ID()));
+    UPDATE ${exceptions_schema}.AI_QUOTA_EXCEPTION_LOG
+       SET end_action = :v_action
+     WHERE request_id = :p_request_id
+       AND user_name  = :u;
+    n := n + 1;
+  END FOR;
+
+  IF (n = 0) THEN
+    RETURN OBJECT_CONSTRUCT('status', 'ERROR', 'message',
+           'No active exception found for request_id ' || COALESCE(p_request_id, 'NULL'));
+  END IF;
+  RETURN OBJECT_CONSTRUCT('status', 'OK', 'request_id', p_request_id, 'result', v_action);
+
+EXCEPTION
+  WHEN OTHER THEN
+    RETURN OBJECT_CONSTRUCT('status', 'ERROR', 'message', SQLERRM, 'sqlstate', SQLSTATE);
+END;

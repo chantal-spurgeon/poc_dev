@@ -204,7 +204,7 @@ Notebook monitoring checks (the original script flags these as unconfirmed):
 
 ****************
 
-**AI cost management unit (budgets, enforcement, CoCo exceptions, dashboard backend)**
+**AI cost management unit (budgets, enforcement, CoCo exceptions, monthly-quota exceptions, dashboard backend)**
 
 `environment/snowflake_account_name/ai_cost_mgmt` creates these objects in `AI_COST_MGMT`, signing in as the new `AI_COST_ADMIN` role:
 
@@ -213,13 +213,17 @@ Notebook monitoring checks (the original script flags these as unconfirmed):
 | `PUBLIC.AI_ROLE_BUDGETS` | table | Monthly credit limit per tier role. The rows (e.g. 50 and 100) are data: insert them in SQL |
 | `PUBLIC.AI_ENFORCEMENT_LOG` | table | One row per revoke and per monthly re-grant |
 | `PUBLIC.ENFORCE_CORTEX_AI_LIMITS` + `_TASK` | procedure, task | Hourly: revokes the tier role from users over budget. **Task created stopped** (see below) |
-| `PUBLIC.RESET_ALL_AI_ACCESS` + `_TASK` | procedure, task | 1st of the month: re-grants tier roles. **Task created stopped** |
+| `PUBLIC.RESET_ALL_AI_ACCESS` + `_TASK` | procedure, task | 1st of the month: re-grants tier roles. Two versions, chosen by `reset_scope` (below). **Task created stopped** |
 | `DASHBOARD.AI_DASH_USAGE_DAILY`, `AI_DASH_USER_STATUS`, `AI_DASH_COCO_24H` | tables | The dashboard's data. Transient (the schema is transient), Time Travel 0 days. Usage keeps `dash_keep_months` of history (default 6) |
 | `PUBLIC.REFRESH_AI_USAGE_DASHBOARD(P_BACKFILL)` + `_TASK` | procedure, task | Hourly at :15: rebuilds the last ~31 days of usage and the two snapshot tables. Read-only on enforcement. `TRUE` reloads the full retention period |
 | `COCO_LIMIT_EXCEPTION_LOG` | table | One row per user per approved CoCo daily-limit exception |
 | `COCO_LIMIT_EXCEPTIONS_ACTIVE` | view | Current exceptions, for the UI and the dashboard |
 | `COCO_APPLY_EFFECTIVE_LIMIT`, `COCO_GRANT_LIMIT_EXCEPTION`, `COCO_REVOKE_LIMIT_EXCEPTION`, `COCO_EXPIRE_LIMIT_EXCEPTIONS` | procedures | Apply, grant, revoke and expire exceptions |
 | `COCO_EXPIRE_LIMIT_EXCEPTIONS_TASK` | task | Hourly at :05: ends expired exceptions |
+| `AI_QUOTA_EXCEPTION_LOG` | table | One row per approved monthly-quota exception (temporary `AI_DATA_SCIENCE` grant) |
+| `AI_QUOTA_EXCEPTIONS_ACTIVE` | view | Current monthly-quota exceptions, for the UI |
+| `AI_APPLY_QUOTA_EXCEPTION`, `AI_GRANT_QUOTA_EXCEPTION`, `AI_REVOKE_QUOTA_EXCEPTION`, `AI_EXPIRE_QUOTA_EXCEPTIONS` | procedures | Apply, grant, revoke and expire monthly-quota exceptions |
+| `AI_EXPIRE_QUOTA_EXCEPTIONS_TASK` | task | Hourly at :10: ends expired monthly-quota exceptions |
 
 How it fits together:
 
@@ -231,6 +235,9 @@ How it fits together:
 - **Procedure arguments** are declared in UPPER CASE. The provider quotes argument names, so `P_DAYS` is what the bodies' unquoted `p_days` resolves to. A validation rule enforces it.
 - **`enforcement_started = false`** creates the enforcement and reset tasks stopped. A new account shouldn't start revoking roles on the first apply. Run `CALL AI_COST_MGMT.PUBLIC.ENFORCE_CORTEX_AI_LIMITS();` by hand, check the log, then set it to `true`. For prod, set it to match the tasks' current state.
 - **Session timezone.** The enforcement, reset and refresh procedures take "this month" from the task's session `TIMEZONE` parameter (the account default unless set), not from the cron timezone. Keep the three tasks on the same `TIMEZONE`.
+- **Monthly-quota exceptions** raise one user's monthly budget by granting `quota_exception_role` (`AI_DATA_SCIENCE`) for a while. Enforcement checks each tier role a user holds against that role's budget, so a user holding both roles keeps access until they pass the `AI_DATA_SCIENCE` budget. The UI calls `AI_GRANT_QUOTA_EXCEPTION('USER', 'APPROVER', 'reason / ticket', NULL)`: `NULL` days runs until the next monthly reset; 1 to 31 sets a fixed length. When the last active request for a user ends, `AI_APPLY_QUOTA_EXCEPTION` revokes the role and gives back `quota_base_role` (`AI_EXPLORER`), unless enforcement revoked that role this month (then it waits for the reset). This covers a gap in the reset: it skips users who hold any tier role, so a user still on the exception role at the reset would otherwise end up with none. The grant is refused for users who already hold `AI_DATA_SCIENCE` outside an exception, or who used up its budget this month. These procedures never write to `AI_ENFORCEMENT_LOG`; they read it (the `LOGGED_AT` CHECK applies to them too). Default expiry uses the caller's session `TIMEZONE`: give the UI's session the same `TIMEZONE` as the tasks.
+- **Reset versions (`reset_scope`).** `"dna"` (the default) is the current configuration: only members of DNA roles get a tier role back. `"all_users"` is for after the rollout: every eligible user (active, enabled, `PERSON`-type, `CHOP.EDU`, not `SVC_`/`E_`) without a tier role gets `AI_EXPLORER`, or `AI_DATA_SCIENCE` if they're in `DNA_DATA_SCIENTISTS`. Both versions differ from prod in four ways, listed at the top of each template: a role held only through an active monthly-quota exception doesn't count as having an AI role; `'SVC_%'`/`'E_%'` became `STARTSWITH` (in `LIKE`, `_` matches any character, so `'E_%'` excluded every user whose name starts with E); one role per user; and one failed `GRANT` no longer stops the loop. Both need `AI_QUOTA_EXCEPTION_LOG` to exist, so deploy the exception module first.
+- **Rollout to everyone.** The `"all_users"` reset *is* the rollout script. Run the preview query (the cursor query from `sql/reset_all_ai_access_all_users.sql.tftpl` as a plain `SELECT`) and review the list, set `reset_scope = "all_users"`, apply, then `CALL AI_COST_MGMT.PUBLIC.RESET_ALL_AI_ACCESS();` once by hand. After that, the monthly task keeps everyone covered, and new users get `AI_EXPLORER` at setup or, at the latest, on the 1st.
 - Order: databases, then rbac, then ai_cost_mgmt.
 
 Granted by hand (not in Terraform, on purpose). `AI_COST_ADMIN` gets only create rights and `IMPORTED PRIVILEGES` from rbac. Three more things are powerful enough that they should be deliberate:
@@ -252,12 +259,15 @@ GRANT USAGE ON SCHEMA AI_COST_MGMT.PUBLIC TO ROLE COCO_EXCEPTION_UI;
 GRANT USAGE ON PROCEDURE AI_COST_MGMT.PUBLIC.COCO_GRANT_LIMIT_EXCEPTION(VARCHAR, VARCHAR, NUMBER, VARCHAR, VARCHAR, NUMBER) TO ROLE COCO_EXCEPTION_UI;
 GRANT USAGE ON PROCEDURE AI_COST_MGMT.PUBLIC.COCO_REVOKE_LIMIT_EXCEPTION(VARCHAR, VARCHAR) TO ROLE COCO_EXCEPTION_UI;
 GRANT SELECT ON VIEW AI_COST_MGMT.PUBLIC.COCO_LIMIT_EXCEPTIONS_ACTIVE TO ROLE COCO_EXCEPTION_UI;
+GRANT USAGE ON PROCEDURE AI_COST_MGMT.PUBLIC.AI_GRANT_QUOTA_EXCEPTION(VARCHAR, VARCHAR, VARCHAR, NUMBER) TO ROLE COCO_EXCEPTION_UI;
+GRANT USAGE ON PROCEDURE AI_COST_MGMT.PUBLIC.AI_REVOKE_QUOTA_EXCEPTION(VARCHAR, VARCHAR) TO ROLE COCO_EXCEPTION_UI;
+GRANT SELECT ON VIEW AI_COST_MGMT.PUBLIC.AI_QUOTA_EXCEPTIONS_ACTIVE TO ROLE COCO_EXCEPTION_UI;
 
 GRANT USAGE  ON SCHEMA AI_COST_MGMT.DASHBOARD TO ROLE <APP_OWNER_ROLE>;
 GRANT SELECT ON ALL TABLES IN SCHEMA AI_COST_MGMT.DASHBOARD TO ROLE <APP_OWNER_ROLE>;
 ```
 
-Grants made by hand on a view or procedure are lost if Terraform ever replaces that object (for example after a body change that forces re-creation). Check the plan for replacements of `COCO_LIMIT_EXCEPTIONS_ACTIVE` and the two UI procedures, and re-run section 3 if they are replaced.
+Grants made by hand on a view or procedure are lost if Terraform ever replaces that object (for example after a body change that forces re-creation). Check the plan for replacements of the two `..._ACTIVE` views and the four UI procedures, and re-run section 3 if they are replaced.
 
 Bringing the prod objects under management. `AI_COST_MGMT`, `AI_ROLE_BUDGETS`, `AI_ENFORCEMENT_LOG`, the two procedures and tasks, and the exception objects already exist in prod. Before the first apply there:
 
@@ -273,9 +283,10 @@ Bringing the prod objects under management. `AI_COST_MGMT`, `AI_ROLE_BUDGETS`, `
    terragrunt import 'snowflake_task.managed_tasks["AI_COST_MGMT.PUBLIC.ENFORCE_CORTEX_AI_LIMITS_TASK"]' '"AI_COST_MGMT"."PUBLIC"."ENFORCE_CORTEX_AI_LIMITS_TASK"'
    ```
 4. **Plan and run the plan guard.** The procedure bodies were reformatted (the `''` became `'`), so expect the procedures to show an update the first time. They shouldn't be replaced: if the plan shows a replacement, stop and check before applying.
-5. **The procedures' owner changes** if they were created by another role. Snowflake procedures run as their owner (or caller), so confirm `AI_COST_ADMIN` holds the hand grants above before the first enforcement run.
+5. **Monthly-quota exception objects are new**: nothing to import, the first apply creates them. They need hand grant 1 (ownership of both tier roles) before the first Accept.
+6. **The procedures' owner changes** if they were created by another role. Snowflake procedures run as their owner (or caller), so confirm `AI_COST_ADMIN` holds the hand grants above before the first enforcement run.
 
-Known issues in the prod enforcement procedures, kept as-is here so the unit matches prod (fixes are drafted in `hourly_revoke_v2.sql` and `reset_ai_v2.sql`, not applied):
+Known issues in the prod enforcement procedure, kept as-is here so the unit matches prod (the reset's own fixes are listed under "Reset versions" above; it no longer matches prod) (fixes are drafted in `hourly_revoke_v2.sql` and `reset_ai_v2.sql`, not applied):
 
 - `GRANTS_TO_USERS` lags up to about two hours, so a user revoked at 10:00 can be revoked and logged again at 11:00.
 - One failed `REVOKE` stops the loop for every user after it.

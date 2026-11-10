@@ -1,0 +1,12 @@
+SELECT request_id,
+       user_name,
+       granted_role,
+       base_role,
+       approved_by,
+       reason,
+       granted_at,
+       expires_at,
+       DATEDIFF('day', CURRENT_TIMESTAMP(), expires_at) AS days_remaining
+  FROM ${exceptions_schema}.AI_QUOTA_EXCEPTION_LOG
+ WHERE status = 'ACTIVE'
+   AND expires_at > CURRENT_TIMESTAMP()
