@@ -183,6 +183,14 @@ next_clean AS (                  -- nearest CVE-free version at or above the one
     JOIN clean_floors cf ON cf.version_key >= v.version_key
     GROUP BY 1
 ),
+line_floor AS (                  -- lowest CVE-free version on the SAME major line (4.x -> 4.8.1, 5.x -> 5.2.0)
+    SELECT v.connector_version, MIN_BY(cf.version, cf.version_key) AS line_floor_version,
+           MIN(cf.version_key) AS line_floor_key
+    FROM versions v
+    JOIN clean_floors cf
+      ON FLOOR(cf.version_key / 1000000) = FLOOR(v.version_key / 1000000)
+    GROUP BY 1
+),
 classified AS (
     SELECT
         v.connector_version,
@@ -193,7 +201,10 @@ classified AS (
             WHEN v.version_key <= p.nearing_eos_key    THEN 'NEARING_END_OF_SUPPORT'
             ELSE 'SUPPORTED'
         END                                            AS support_status,
-        COALESCE(v.version_key < p.min_no_cve_key, FALSE) AS below_min_no_cve_version,
+        -- Compare against the floor for this version's own major line. If that line
+        -- has no CVE-free release at all (e.g. 3.x), fall back to the overall floor.
+        COALESCE(lf.line_floor_version, p.min_no_cve_version)               AS min_no_cve_version_for_line,
+        COALESCE(v.version_key < COALESCE(lf.line_floor_key, p.min_no_cve_key), FALSE) AS below_min_no_cve_version,
         COALESCE(vc.known_cve_count, 0)                AS known_cve_count,
         vc.known_cve_ids,
         p.min_supported_version,
@@ -205,6 +216,7 @@ classified AS (
     LEFT JOIN policy       p  ON 1 = 1
     LEFT JOIN version_cves vc ON vc.connector_version = v.connector_version
     LEFT JOIN next_clean   nc ON nc.connector_version = v.connector_version
+    LEFT JOIN line_floor   lf ON lf.connector_version = v.connector_version
 )
 SELECT
     ps.user_name,
@@ -214,6 +226,7 @@ SELECT
     c.connector_version,
     c.support_status,
     c.below_min_no_cve_version,
+    c.min_no_cve_version_for_line,
     c.known_cve_count,
     c.known_cve_ids,
     CASE
