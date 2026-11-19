@@ -46,7 +46,7 @@ locals {
   # Set to a pool name to create the task (it is created STOPPED, see below).
   # It SUSPENDS A SHARED POOL when nothing was busy for 30 minutes, so read the
   # README section on it before turning it on.
-  idle_suspend_pool = null
+  idle_suspend_pool = "SYSTEM_COMPUTE_POOL_CPU"
 
   sql_vars = {
     monitor_schema   = local.schema
