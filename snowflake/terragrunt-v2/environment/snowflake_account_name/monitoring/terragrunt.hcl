@@ -38,7 +38,7 @@ locals {
   # SHOW PARAMETERS LIKE 'EVENT_TABLE' IN ACCOUNT; this is the default one).
   event_view = "SNOWFLAKE.TELEMETRY.EVENTS_VIEW"
 
-  retention_days   = 90    # rows older than this are deleted by the rollup/capture tasks
+  retention_days   = 90    # rows older than this are deleted by the rollup/capture/suspend tasks
   snapshot_minutes = 10    # keep equal to the capture schedules below (used to turn counts into hours)
   idle_cpu_cores   = 0.05  # V_IDLE_BUT_RUNNING_24H: below this max CPU a running service counts as idle
 
