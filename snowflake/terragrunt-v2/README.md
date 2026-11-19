@@ -158,7 +158,7 @@ To import resources (example; the key is the one in the unit's `inputs`, here `d
 | `V_POOL_KEEPERS_NOW` | view | Services currently keeping each pool awake |
 | `V_SERVICE_RUNNING_HOURS_DAILY`, `V_SERVICE_PCT_OF_DAY`, `V_DAILY_KEEPERS` | views | How long each service ran per day, as hours and as a share of the day |
 | `V_IDLE_BUT_RUNNING_24H` | view | Services that were RUNNING while their CPU stayed near zero |
-| `POOL_SUSPEND_LOG`, `SUSPEND_POOL_IF_IDLE` | table, task | Optional: suspends one pool on weekday evenings if idle. Not created unless `idle_suspend_pool` is set |
+| `POOL_SUSPEND_LOG`, `SUSPEND_POOL_IF_IDLE` | table, task | Optional: suspends one pool on weekday evenings if idle; also trims `POOL_SUSPEND_LOG` to `retention_days` after each run. Not created unless `idle_suspend_pool` is set |
 | `NOTEBOOK_INVENTORY_LOG`, `NOTEBOOK_DESCRIBE_LOG` | tables | Daily `SHOW NOTEBOOKS` and `DESCRIBE NOTEBOOK` rows, stored whole as VARIANT |
 | `CAPTURE_NOTEBOOK_CONFIG` | task | Fills the two tables above daily at 6:15 AM Central. **Created stopped** |
 | `NOTEBOOK_SERVICE_LOG`, `CAPTURE_NOTEBOOK_SERVICES` | table, task | Notebook-managed services every 10 minutes. **Task created stopped** |

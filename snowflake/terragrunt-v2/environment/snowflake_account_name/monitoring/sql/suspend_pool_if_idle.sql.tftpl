@@ -23,4 +23,8 @@ BEGIN
     INSERT INTO ${monitor_schema}.POOL_SUSPEND_LOG
       SELECT CURRENT_TIMESTAMP(), '${pool_name}', :samples, :busy, :jobs, 'skipped';
   END IF;
+
+  -- Retention: runs last so a cleanup error can't block a suspend
+  DELETE FROM ${monitor_schema}.POOL_SUSPEND_LOG
+   WHERE checked_at < DATEADD('day', -${retention_days}, CURRENT_TIMESTAMP());
 END;

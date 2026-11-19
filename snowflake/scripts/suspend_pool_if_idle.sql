@@ -36,6 +36,10 @@ BEGIN
     INSERT INTO MONITOR_DB.OPS.pool_suspend_log
       SELECT CURRENT_TIMESTAMP(), '<POOL_NAME>', :samples, :busy, :jobs, 'skipped';
   END IF;
+
+  -- Retention: runs last so a cleanup error can't block a suspend
+  DELETE FROM MONITOR_DB.OPS.pool_suspend_log
+   WHERE checked_at < DATEADD('day', -90, CURRENT_TIMESTAMP());
 END;
 
 EXECUTE TASK MONITOR_DB.OPS.suspend_pool_if_idle;
